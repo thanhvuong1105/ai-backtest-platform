@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "symbols": ["BTCUSDT"],
+    "timeframe": "1h"
+  },
+  "strategy": {
+    "type": "ema_cross",
+    "params": {
+      "emaFast": 10,
+      "emaSlow": 30
+    }
+  },
+  "initial_equity": 10000,
+  "range": {
+    "from": "2024-11-01",
+    "to": "2024-12-31"
+  },
+  "properties": {
+    "initialCapital": 10000,
+    "orderSize": {"value": 100, "type": "percent"}
+  }
+}

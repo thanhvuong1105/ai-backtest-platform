@@ -1,0 +1,35 @@
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Rust
+rust_engine/target/
+*.so
+*.dylib
+*.dll
+
+# IDE
+.history/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data files (large)
+engine/data/*.csv
+engine/data/*/*.csv
+
+# Backup
+.git_backup/
+
+# Env
+.env
+*.log
