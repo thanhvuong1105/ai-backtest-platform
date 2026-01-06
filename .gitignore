@@ -8,12 +8,6 @@ __pycache__/
 .venv/
 venv/
 
-# Rust
-rust_engine/target/
-*.so
-*.dylib
-*.dll
-
 # IDE
 .history/
 .vscode/
@@ -26,9 +20,6 @@ Thumbs.db
 # Data files (large)
 engine/data/*.csv
 engine/data/*/*.csv
-
-# Backup
-.git_backup/
 
 # Env
 .env
