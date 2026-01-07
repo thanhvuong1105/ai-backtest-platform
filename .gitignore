@@ -24,3 +24,5 @@ engine/data/*/*.csv
 # Env
 .env
 *.log
+__MACOSX/
+.DS_Store
