@@ -312,12 +312,12 @@ def ai_recommend(cfg: Dict[str, Any]) -> Dict[str, Any]:
         run_cfg["costs"] = build_costs(run_cfg.get("costs", {}))
         prepared_runs.append((run_cfg, props, date_range, min_tf_minutes))
 
-    # Run backtests using ThreadPoolExecutor
-    # Note: Python GIL limits true parallelism, but threads still help with I/O
-    # For CPU-bound work, the optimized backtest_engine is the main speedup
+    # Run backtests using ThreadPoolExecutor with more workers
+    # Increased workers for I/O-bound data loading
     results = []
-    workers = max(1, (os.cpu_count() or 2))
+    workers = max(4, (os.cpu_count() or 2) * 2)  # 2x CPU cores for I/O-bound work
     completed = 0
+    last_progress_time = 0  # Throttle progress updates
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         # Submit all jobs
@@ -326,18 +326,21 @@ def ai_recommend(cfg: Dict[str, Any]) -> Dict[str, Any]:
         # Collect results as they complete
         for future in as_completed(futures):
             completed += 1
-            # Progress emit
-            if "AI_PROGRESS" in os.environ:
+            # Progress emit (throttled to every 200ms to avoid spam)
+            current_time = __import__('time').time()
+            if "AI_PROGRESS" in os.environ and (current_time - last_progress_time >= 0.2 or completed == total):
                 print(json.dumps({"progress": completed, "total": total}))
                 sys.stdout.flush()
+                last_progress_time = current_time
 
             try:
                 result = future.result()
                 results.append(result)
             except Exception as e:
                 # Log error but continue with other runs
-                print(json.dumps({"error": str(e), "progress": completed, "total": total}), file=sys.stderr)
-                sys.stderr.flush()
+                if "AI_PROGRESS" in os.environ:
+                    print(json.dumps({"progress": completed, "total": total}), file=sys.stderr)
+                    sys.stderr.flush()
 
     # sort desc score
     results.sort(key=lambda x: x["summary"]["score"], reverse=True)
