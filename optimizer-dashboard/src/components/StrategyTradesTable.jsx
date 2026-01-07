@@ -103,7 +103,7 @@ export default function StrategyTradesTable({
                 <td style={{ ...cell, fontWeight: 700, fontFamily: mono }}>
                   {t.tradeNo}
                 </td>
-                <td style={{ ...cell, color: "#e5e7eb" }}>Exit</td>
+                <td style={{ ...cell, color: "#e5e7eb" }}>Entry</td>
                 <td style={{ ...cell, color: "#d1d5db" }}>{t.time}</td>
                 <td style={cell}>
                   <span
@@ -209,21 +209,37 @@ function formatNotional(v) {
 
 function parseTime(str) {
   if (!str) return "-";
-  // Backend returns time in UTC+7 format "YYYY-MM-DD HH:MM:SS"
-  // Display as-is since it's already in Ho Chi Minh timezone
-  return str;
+  try {
+    // Parse the date string and convert to UTC+7 (Ho Chi Minh)
+    const date = new Date(str);
+    if (isNaN(date.getTime())) return str;
+
+    // Format in UTC+7 timezone
+    return date.toLocaleString("vi-VN", {
+      timeZone: "Asia/Ho_Chi_Minh",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return str;
+  }
 }
 
 function normalizeTrades(trades, initialEquity) {
   if (!trades || !trades.length) return [];
 
-  const completed = trades.filter((t) => t.exit_time);
+  const completed = trades.filter((t) => t.entry_time);
   if (!completed.length) return [];
 
-  // Chronological order to compute cumulative correctly
+  // Chronological order by entry_time to compute cumulative correctly
   const sortedAsc = [...completed].sort((a, b) => {
-    const ta = new Date(a.exit_time).getTime();
-    const tb = new Date(b.exit_time).getTime();
+    const ta = new Date(a.entry_time).getTime();
+    const tb = new Date(b.entry_time).getTime();
     return ta - tb;
   });
 
@@ -243,7 +259,7 @@ function normalizeTrades(trades, initialEquity) {
     const ddPct = peak ? ((equityNow - peak) / peak) * 100 : 0;
 
     return {
-      time: parseTime(t.exit_time),
+      time: parseTime(t.entry_time), // Changed from exit_time to entry_time
       signal: t.side || "Long",
       entryPrice: Number(t.entry_price),
       exitPrice: Number(t.exit_price),

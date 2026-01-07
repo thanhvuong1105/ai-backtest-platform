@@ -18,6 +18,22 @@ const PORT = process.env.PORT || 3002;
 const progressStore = new Map(); // jobId -> {progress,total,status,error}
 const resultStore = new Map();   // jobId -> result
 const childStore = new Map();    // jobId -> child process
+const sseClients = new Map();    // jobId -> Set<res> for SSE streaming
+
+// Helper: broadcast progress to all SSE clients for a job (defined early for hoisting)
+function broadcastProgress(jobId, data) {
+  const clients = sseClients.get(jobId);
+  console.log(`📡 broadcastProgress: jobId=${jobId}, clients=${clients?.size || 0}, data=`, JSON.stringify(data));
+  if (!clients || clients.size === 0) return;
+  const msg = `data: ${JSON.stringify(data)}\n\n`;
+  for (const client of clients) {
+    try {
+      client.write(msg);
+    } catch (e) {
+      console.warn(`⚠️ SSE write error for ${jobId}:`, e.message);
+    }
+  }
+}
 
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -236,6 +252,9 @@ app.post("/ai-agent", (req, res) => {
     const chunk = d.toString();
     rawOutput += chunk;
 
+    // Debug: log raw output
+    console.log(`🐍 Python stdout (jobId=${jobId}): ${chunk.slice(0, 200)}...`);
+
     // Parse progress lines while collecting
     chunk.split("\n").forEach(line => {
       const s = line.trim();
@@ -243,11 +262,14 @@ app.post("/ai-agent", (req, res) => {
       try {
         const obj = JSON.parse(s);
         if (obj && typeof obj === "object" && "progress" in obj && "total" in obj && !("success" in obj)) {
-          progressStore.set(jobId, {
+          const progressData = {
             progress: obj.progress,
             total: obj.total,
             status: "running",
-          });
+          };
+          progressStore.set(jobId, progressData);
+          // Broadcast to SSE clients immediately (real-time update)
+          broadcastProgress(jobId, progressData);
         }
       } catch {
         // not json, ignore during streaming
@@ -257,7 +279,9 @@ app.post("/ai-agent", (req, res) => {
     if (rawOutput.length > MAX_OUTPUT) {
       aborted = true;
       python.kill();
-      progressStore.set(jobId, { progress: 0, total: 0, status: "error", error: "Output too large" });
+      const errorData = { progress: 0, total: 0, status: "error", error: "Output too large" };
+      progressStore.set(jobId, errorData);
+      broadcastProgress(jobId, errorData);
     }
   });
   python.stderr.on("data", d => {
@@ -269,7 +293,9 @@ app.post("/ai-agent", (req, res) => {
     childStore.delete(jobId);
     if (aborted) return;
     if (code !== 0) {
-      progressStore.set(jobId, { progress: 0, total: 0, status: "error", error: stderr || "AI Agent failed" });
+      const errorData = { progress: 0, total: 0, status: "error", error: stderr || "AI Agent failed" };
+      progressStore.set(jobId, errorData);
+      broadcastProgress(jobId, errorData);
       return;
     }
 
@@ -298,10 +324,14 @@ app.post("/ai-agent", (req, res) => {
       }
 
       resultStore.set(jobId, finalJson);
-      progressStore.set(jobId, { progress: finalJson?.total || 1, total: finalJson?.total || 1, status: "done" });
+      const doneData = { progress: finalJson?.total || 1, total: finalJson?.total || 1, status: "done" };
+      progressStore.set(jobId, doneData);
+      broadcastProgress(jobId, doneData);
     } catch (e) {
       const errDetail = stderr ? `stderr: ${stderr.slice(0, 500)}` : `stdout: ${(rawOutput || "").slice(-500)}`;
-      progressStore.set(jobId, { progress: 0, total: 0, status: "error", error: `Invalid JSON from AI Agent. ${errDetail}` });
+      const errorData = { progress: 0, total: 0, status: "error", error: `Invalid JSON from AI Agent. ${errDetail}` };
+      progressStore.set(jobId, errorData);
+      broadcastProgress(jobId, errorData);
     }
   });
 
@@ -311,11 +341,50 @@ app.post("/ai-agent", (req, res) => {
   res.json({ jobId });
 });
 
-// Progress endpoint
+// Progress endpoint (polling - legacy)
 app.get("/ai-agent/progress/:jobId", (req, res) => {
   const job = progressStore.get(req.params.jobId);
   if (!job) return res.status(404).json({ error: "Job not found" });
   res.json(job);
+});
+
+// ================== SSE PROGRESS STREAM (real-time, faster) ==================
+// Client connects once, server pushes updates immediately when progress changes
+app.get("/ai-agent/progress-stream/:jobId", (req, res) => {
+  const jobId = req.params.jobId;
+  const job = progressStore.get(jobId);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+
+  // SSE headers
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.flushHeaders();
+
+  // Register client
+  if (!sseClients.has(jobId)) {
+    sseClients.set(jobId, new Set());
+  }
+  sseClients.get(jobId).add(res);
+
+  // Send initial state immediately
+  res.write(`data: ${JSON.stringify(job)}\n\n`);
+
+  // Heartbeat every 15s to keep connection alive
+  const heartbeat = setInterval(() => {
+    res.write(`: heartbeat\n\n`);
+  }, 15000);
+
+  // Cleanup on close
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    const clients = sseClients.get(jobId);
+    if (clients) {
+      clients.delete(res);
+      if (clients.size === 0) sseClients.delete(jobId);
+    }
+  });
 });
 
 // Result endpoint
@@ -336,7 +405,9 @@ app.post("/ai-agent/cancel/:jobId", (req, res) => {
     child.kill();
     childStore.delete(jobId);
   }
-  progressStore.set(jobId, { progress: 0, total: 0, status: "canceled", error: "Canceled by user" });
+  const cancelData = { progress: 0, total: 0, status: "canceled", error: "Canceled by user" };
+  progressStore.set(jobId, cancelData);
+  broadcastProgress(jobId, cancelData);
   res.json({ success: true });
 });
 

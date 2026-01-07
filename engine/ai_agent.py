@@ -255,10 +255,20 @@ def ai_recommend(cfg: Dict[str, Any]) -> Dict[str, Any]:
             pass
         return 60
 
+    # Emit initial progress (preparing phase)
+    if "AI_PROGRESS" in os.environ:
+        print(json.dumps({"progress": 0, "total": 1, "phase": "preparing"}))
+        sys.stdout.flush()
+
     top_n = cfg.get("topN", 50)
     # Build runs trước để biết total
     runs = build_runs(cfg)
     total = len(runs)
+
+    # Emit progress after build_runs
+    if "AI_PROGRESS" in os.environ:
+        print(json.dumps({"progress": 0, "total": total, "phase": "running"}))
+        sys.stdout.flush()
     props = cfg.get("properties", {}) or {}
 
     def build_costs(base_costs):
