@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { runAiAgent, startAiAgent, getAiAgentProgress, getAiAgentResult, cancelAiAgent } from "../api/optimizer";
+import { runAiAgent, startAiAgent, getAiAgentProgress, getAiAgentResult, cancelAiAgent, subscribeAiAgentProgress } from "../api/optimizer";
 
 import Header from "../components/Header";
 import StrategyTable from "../components/StrategyTable";
@@ -134,6 +134,7 @@ export default function Dashboard() {
   const [jobId, setJobId] = useState(null);
   const [progress, setProgress] = useState({ percent: 0, status: "idle" });
   const [canceling, setCanceling] = useState(false);
+  const [sseCleanup, setSseCleanup] = useState(null); // SSE cleanup function
 
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [selectedTradeIndex, setSelectedTradeIndex] = useState(null);
@@ -332,55 +333,84 @@ export default function Dashboard() {
       setJobId(jid);
       setProgress({ percent: 0, status: "running" });
 
-      const poll = async () => {
-        try {
-          const prog = await getAiAgentProgress(jid);
-          const percent = prog.total ? Math.min(100, Math.round((prog.progress / prog.total) * 100)) : 0;
-          setProgress({ percent, status: prog.status || "running" });
-          if (prog.status === "done") {
-            const data = await getAiAgentResult(jid);
-            const baseRuns = (data.all && data.all.length ? data.all : data.top || []).map((r, idx) => ({
-              ...r,
-              strategyId: `s${idx + 1}`,
-            }));
-            setResult({
-              ...data,
-              runs: baseRuns,
-            });
-            if (baseRuns.length) {
-              setSelectedBotId(baseRuns[0].strategyId);
-              setTradesBotId(baseRuns[0].strategyId);
-            }
-            setAgentComment(data.comment || "");
+      // Use SSE for real-time progress (much faster than polling!)
+      const handleProgress = async (prog) => {
+        const percent = prog.total ? Math.min(100, Math.round((prog.progress / prog.total) * 100)) : 0;
+        setProgress({ percent, status: prog.status || "running" });
 
-            const vis = {};
-            baseRuns.slice(0, 5).forEach((r) => {
-              vis[r.strategyId] = true;
-            });
-            setVisibleSeries(vis);
-            setLoading(false);
-            return;
+        if (prog.status === "done") {
+          // Cleanup SSE connection
+          if (sseCleanup) sseCleanup();
+          setSseCleanup(null);
+
+          const data = await getAiAgentResult(jid);
+          const baseRuns = (data.all && data.all.length ? data.all : data.top || []).map((r, idx) => ({
+            ...r,
+            strategyId: `s${idx + 1}`,
+          }));
+          setResult({
+            ...data,
+            runs: baseRuns,
+          });
+          if (baseRuns.length) {
+            setSelectedBotId(baseRuns[0].strategyId);
+            setTradesBotId(baseRuns[0].strategyId);
           }
-          if (prog.status === "error") {
-            setError(prog.error || "AI Agent failed");
-            setLoading(false);
-            setJobId(null);
-            return;
-          }
-          if (prog.status === "canceled") {
-            setError("Đã hủy bởi người dùng");
-            setLoading(false);
-            setJobId(null);
-            return;
-          }
-          setTimeout(poll, 1500);
-        } catch (err) {
-          setError(err.message || "AI Agent failed");
+          setAgentComment(data.comment || "");
+
+          const vis = {};
+          baseRuns.slice(0, 5).forEach((r) => {
+            vis[r.strategyId] = true;
+          });
+          setVisibleSeries(vis);
           setLoading(false);
           setJobId(null);
+          return;
+        }
+        if (prog.status === "error") {
+          if (sseCleanup) sseCleanup();
+          setSseCleanup(null);
+          setError(prog.error || "AI Agent failed");
+          setLoading(false);
+          setJobId(null);
+          return;
+        }
+        if (prog.status === "canceled") {
+          if (sseCleanup) sseCleanup();
+          setSseCleanup(null);
+          setError("Đã hủy bởi người dùng");
+          setLoading(false);
+          setJobId(null);
+          return;
         }
       };
-      poll();
+
+      const handleError = (err) => {
+        console.warn("SSE error, falling back to polling:", err);
+        // Fallback to polling if SSE fails
+        if (sseCleanup) sseCleanup();
+        setSseCleanup(null);
+
+        const poll = async () => {
+          try {
+            const prog = await getAiAgentProgress(jid);
+            handleProgress(prog);
+            if (prog.status === "running") {
+              setTimeout(poll, 500); // Faster polling as fallback (500ms)
+            }
+          } catch (pollErr) {
+            setError(pollErr.message || "AI Agent failed");
+            setLoading(false);
+            setJobId(null);
+          }
+        };
+        poll();
+      };
+
+      // Subscribe to SSE stream
+      const cleanup = subscribeAiAgentProgress(jid, handleProgress, handleError);
+      setSseCleanup(() => cleanup);
+
     } catch (e) {
       setError(e.message || "AI Agent failed");
       setLoading(false);
@@ -391,6 +421,11 @@ export default function Dashboard() {
     if (!jobId) return;
     setCanceling(true);
     try {
+      // Cleanup SSE connection first
+      if (sseCleanup) {
+        sseCleanup();
+        setSseCleanup(null);
+      }
       await cancelAiAgent(jobId);
       setProgress({ percent: progress.percent, status: "canceled" });
       setLoading(false);
@@ -1687,7 +1722,7 @@ export default function Dashboard() {
                     initialEquity={
                       tradesBot?.summary?.initialEquity ||
                       selectedBot?.summary?.initialEquity ||
-                      initialCapital
+                      Number(currentInputs.properties?.initialCapital || 0)
                     }
                     selectedIndex={selectedTradeIndex}
                     onSelectTrade={(trade, idx) => {
