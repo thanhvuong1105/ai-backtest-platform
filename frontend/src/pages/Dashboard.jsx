@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { runAiAgent, startAiAgent, getAiAgentProgress, getAiAgentResult, cancelAiAgent } from "../api/optimizer";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { startAiAgent, getAiAgentResult, cancelAiAgent, createProgressStream } from "../api/optimizer";
 
 import Header from "../components/Header";
 import StrategyTable from "../components/StrategyTable";
@@ -139,6 +139,12 @@ export default function Dashboard() {
   const [selectedTradeIndex, setSelectedTradeIndex] = useState(null);
   const [selectedBotId, setSelectedBotId] = useState(null);
   const [tradesBotId, setTradesBotId] = useState(null);
+
+  // SSE EventSource ref for cleanup
+  const eventSourceRef = useRef(null);
+  // Throttle ref for UI updates
+  const lastProgressUpdateRef = useRef(0);
+  const PROGRESS_THROTTLE_MS = 300; // Only update UI every 300ms
 
   const [tradeFilters, setTradeFilters] = useState({
     long: true,
@@ -332,64 +338,86 @@ export default function Dashboard() {
       setJobId(jid);
       setProgress({ percent: 0, status: "running" });
 
-      const poll = async () => {
-        try {
-          const prog = await getAiAgentProgress(jid);
+      // Close any existing EventSource
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+
+      // Use SSE for real-time progress streaming
+      const eventSource = createProgressStream(jid, {
+        onProgress: (prog) => {
+          // Throttle UI updates to avoid excessive re-renders
+          const now = Date.now();
+          if (now - lastProgressUpdateRef.current < PROGRESS_THROTTLE_MS) {
+            return;
+          }
+          lastProgressUpdateRef.current = now;
+
           const percent = prog.total ? Math.min(100, Math.round((prog.progress / prog.total) * 100)) : 0;
           setProgress({ percent, status: prog.status || "running" });
-          if (prog.status === "done") {
-            const data = await getAiAgentResult(jid);
-            const baseRuns = (data.all && data.all.length ? data.all : data.top || []).map((r, idx) => ({
-              ...r,
-              strategyId: `s${idx + 1}`,
-            }));
-            setResult({
-              ...data,
-              runs: baseRuns,
-            });
-            if (baseRuns.length) {
-              setSelectedBotId(baseRuns[0].strategyId);
-              setTradesBotId(baseRuns[0].strategyId);
-            }
-            setAgentComment(data.comment || "");
+        },
+        onDone: async (prog) => {
+          eventSourceRef.current = null;
 
-            const vis = {};
-            baseRuns.slice(0, 5).forEach((r) => {
-              vis[r.strategyId] = true;
-            });
-            setVisibleSeries(vis);
-            setLoading(false);
-            return;
-          }
-          if (prog.status === "error") {
+          if (prog.status === "done") {
+            try {
+              const data = await getAiAgentResult(jid);
+              const baseRuns = (data.all && data.all.length ? data.all : data.top || []).map((r, idx) => ({
+                ...r,
+                strategyId: `s${idx + 1}`,
+              }));
+              setResult({
+                ...data,
+                runs: baseRuns,
+              });
+              if (baseRuns.length) {
+                setSelectedBotId(baseRuns[0].strategyId);
+                setTradesBotId(baseRuns[0].strategyId);
+              }
+              setAgentComment(data.comment || "");
+
+              const vis = {};
+              baseRuns.slice(0, 5).forEach((r) => {
+                vis[r.strategyId] = true;
+              });
+              setVisibleSeries(vis);
+              setProgress({ percent: 100, status: "done" });
+            } catch (err) {
+              setError(err.message || "Failed to fetch result");
+            }
+          } else if (prog.status === "error") {
             setError(prog.error || "AI Agent failed");
-            setLoading(false);
-            setJobId(null);
-            return;
-          }
-          if (prog.status === "canceled") {
+          } else if (prog.status === "canceled") {
             setError("Đã hủy bởi người dùng");
-            setLoading(false);
-            setJobId(null);
-            return;
           }
-          setTimeout(poll, 1500);
-        } catch (err) {
-          setError(err.message || "AI Agent failed");
+
           setLoading(false);
           setJobId(null);
-        }
-      };
-      poll();
+        },
+        onError: (error) => {
+          console.error("[SSE] Connection error:", error);
+          // EventSource will auto-reconnect, don't set error state immediately
+        },
+      });
+
+      eventSourceRef.current = eventSource;
     } catch (e) {
       setError(e.message || "AI Agent failed");
       setLoading(false);
     }
   };
 
-  const handleCancel = async () => {
+  const handleCancel = useCallback(async () => {
     if (!jobId) return;
     setCanceling(true);
+
+    // Close EventSource first
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
     try {
       await cancelAiAgent(jobId);
       setProgress({ percent: progress.percent, status: "canceled" });
@@ -402,7 +430,17 @@ export default function Dashboard() {
     } finally {
       setCanceling(false);
     }
-  };
+  }, [jobId, progress.percent]);
+
+  // Cleanup EventSource on unmount
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, []);
 
   /**
    * ===== Equity curve (base) =====

@@ -15,12 +15,20 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
 
   # Backend - FastAPI server
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
     container_name: backtest-backend
     ports:
       - "8000:8000"
@@ -33,6 +41,7 @@ services:
       - JOB_TIMEOUT_SEC=1800
       - MAX_STDOUT_SIZE=20971520
       - PROJECT_ROOT=/app
+      - PYTHONUNBUFFERED=1
     volumes:
       # Mount data folder for market data CSVs
       - ./engine/data:/app/engine/data:ro
@@ -45,22 +54,34 @@ services:
       timeout: 10s
       retries: 3
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
 
   # Celery Worker - Background task processor
   celery:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
     container_name: backtest-celery
-    command: celery -A app.services.celery_app.celery worker --loglevel=info -Q default
+    command: celery -A app.services.celery_app.celery worker --loglevel=info -Q default --concurrency=${CELERY_CONCURRENCY:-2}
     environment:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - JOB_TIMEOUT_SEC=1800
       - MAX_STDOUT_SIZE=20971520
-      - CELERY_CONCURRENCY=2
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
       - PROJECT_ROOT=/app
+      - PYTHONUNBUFFERED=1
+      # Celery worker optimization
+      - CELERY_WORKER_PREFETCH_MULTIPLIER=1
+      - CELERY_TASK_ACKS_LATE=true
     volumes:
       # Mount data folder for market data CSVs
       - ./engine/data:/app/engine/data:ro
@@ -68,18 +89,35 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
 
   # Frontend - React app served by nginx
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+        - NODE_OPTIONS=--max_old_space_size=2048
     container_name: backtest-frontend
     ports:
       - "3000:80"
     depends_on:
       - backend
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
 
   # Flower - Celery monitoring (optional)
   flower:
@@ -100,6 +138,12 @@ services:
     profiles:
       - monitoring
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
 
 volumes:
   redis-data:

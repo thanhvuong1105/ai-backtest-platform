@@ -11,6 +11,8 @@ Now uses direct imports from engine package instead of subprocess.
 """
 
 import os
+import time
+import logging
 from typing import Dict, Any
 from celery.exceptions import SoftTimeLimitExceeded
 
@@ -29,6 +31,19 @@ from engine import (
     generate_chart_data,
 )
 
+# Configure logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Add console handler if not already configured
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(
+        '[%(asctime)s] %(levelname)s [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    ))
+    logger.addHandler(handler)
+
 # Configuration
 JOB_TIMEOUT_SEC = int(os.getenv("JOB_TIMEOUT_SEC", 1800))
 
@@ -43,6 +58,9 @@ def create_progress_callback(job_id: str):
     Returns:
         Callback function that publishes progress to Redis
     """
+    last_log_time = [0]  # Use list to allow mutation in closure
+    LOG_INTERVAL = 5  # Log every 5 seconds
+
     def progress_cb(
         _job_id: str,
         progress: int,
@@ -52,6 +70,7 @@ def create_progress_callback(job_id: str):
     ):
         # Check for cancellation
         if check_cancel_flag(job_id):
+            logger.info(f"[{job_id}] Cancellation requested")
             raise InterruptedError("Job canceled by user")
 
         # Publish progress
@@ -61,6 +80,13 @@ def create_progress_callback(job_id: str):
             "status": status,
             **extra
         })
+
+        # Throttled logging
+        now = time.time()
+        if now - last_log_time[0] >= LOG_INTERVAL:
+            percent = (progress / total * 100) if total > 0 else 0
+            logger.info(f"[{job_id}] Progress: {progress}/{total} ({percent:.1f}%)")
+            last_log_time[0] = now
 
     return progress_cb
 
@@ -77,6 +103,10 @@ def run_backtest_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, An
     Returns:
         Backtest result
     """
+    start_time = time.time()
+    logger.info(f"[{job_id}] Starting backtest task")
+    logger.debug(f"[{job_id}] Config: {config}")
+
     try:
         # Initialize progress
         publish_progress(job_id, {
@@ -96,9 +126,15 @@ def run_backtest_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, An
             "status": "done"
         })
 
+        elapsed = time.time() - start_time
+        trades = result.get("summary", {}).get("totalTrades", 0)
+        logger.info(f"[{job_id}] Backtest completed in {elapsed:.2f}s - {trades} trades")
+
         return result
 
     except SoftTimeLimitExceeded:
+        elapsed = time.time() - start_time
+        logger.error(f"[{job_id}] Backtest timed out after {elapsed:.2f}s")
         publish_progress(job_id, {
             "progress": 0,
             "total": 0,
@@ -108,6 +144,8 @@ def run_backtest_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, An
         return {"error": "Timeout", "status": "error"}
 
     except Exception as e:
+        elapsed = time.time() - start_time
+        logger.exception(f"[{job_id}] Backtest failed after {elapsed:.2f}s: {e}")
         publish_progress(job_id, {
             "progress": 0,
             "total": 0,
@@ -129,6 +167,13 @@ def optimize_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, Any]:
     Returns:
         Optimization result
     """
+    start_time = time.time()
+    symbols = config.get("symbols", [])
+    timeframes = config.get("timeframes", [])
+    strategy_type = config.get("strategy", {}).get("type", "unknown")
+
+    logger.info(f"[{job_id}] Starting optimizer task - {strategy_type} on {symbols} x {timeframes}")
+
     try:
         # Initialize progress
         publish_progress(job_id, {
@@ -152,9 +197,20 @@ def optimize_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, Any]:
             "status": "done"
         })
 
+        elapsed = time.time() - start_time
+        stats = result.get("stats", {})
+        logger.info(
+            f"[{job_id}] Optimizer completed in {elapsed:.2f}s - "
+            f"Total: {stats.get('totalRuns', 0)}, "
+            f"Passed: {stats.get('passedRuns', 0)}, "
+            f"Rejected: {stats.get('rejectedRuns', 0)}"
+        )
+
         return result
 
     except InterruptedError:
+        elapsed = time.time() - start_time
+        logger.warning(f"[{job_id}] Optimizer canceled after {elapsed:.2f}s")
         publish_progress(job_id, {
             "progress": 0,
             "total": 0,
@@ -164,6 +220,8 @@ def optimize_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, Any]:
         return {"error": "Canceled by user", "status": "canceled"}
 
     except SoftTimeLimitExceeded:
+        elapsed = time.time() - start_time
+        logger.error(f"[{job_id}] Optimizer timed out after {elapsed:.2f}s")
         publish_progress(job_id, {
             "progress": 0,
             "total": 0,
@@ -173,6 +231,8 @@ def optimize_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, Any]:
         return {"error": "Timeout", "status": "error"}
 
     except Exception as e:
+        elapsed = time.time() - start_time
+        logger.exception(f"[{job_id}] Optimizer failed after {elapsed:.2f}s: {e}")
         publish_progress(job_id, {
             "progress": 0,
             "total": 0,
@@ -194,6 +254,13 @@ def ai_agent_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, Any]:
     Returns:
         AI agent result
     """
+    start_time = time.time()
+    symbols = config.get("symbols", [])
+    timeframes = config.get("timeframes", [])
+    strategy_type = config.get("strategy", {}).get("type", "unknown")
+
+    logger.info(f"[{job_id}] Starting AI agent task - {strategy_type} on {symbols} x {timeframes}")
+
     try:
         # Initialize progress
         publish_progress(job_id, {
@@ -217,9 +284,21 @@ def ai_agent_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, Any]:
             "status": "done"
         })
 
+        elapsed = time.time() - start_time
+        success = result.get("success", False)
+        best = result.get("best", {})
+        best_info = f"{best.get('symbol')} {best.get('timeframe')}" if best else "None"
+
+        logger.info(
+            f"[{job_id}] AI agent completed in {elapsed:.2f}s - "
+            f"Success: {success}, Best: {best_info}, Total runs: {total}"
+        )
+
         return result
 
     except InterruptedError:
+        elapsed = time.time() - start_time
+        logger.warning(f"[{job_id}] AI agent canceled after {elapsed:.2f}s")
         publish_progress(job_id, {
             "progress": 0,
             "total": 0,
@@ -229,6 +308,8 @@ def ai_agent_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, Any]:
         return {"error": "Canceled by user", "status": "canceled"}
 
     except SoftTimeLimitExceeded:
+        elapsed = time.time() - start_time
+        logger.error(f"[{job_id}] AI agent timed out after {elapsed:.2f}s")
         publish_progress(job_id, {
             "progress": 0,
             "total": 0,
@@ -238,8 +319,8 @@ def ai_agent_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, Any]:
         return {"error": "Timeout", "status": "error"}
 
     except Exception as e:
-        import traceback
-        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        elapsed = time.time() - start_time
+        logger.exception(f"[{job_id}] AI agent failed after {elapsed:.2f}s: {e}")
         publish_progress(job_id, {
             "progress": 0,
             "total": 0,
@@ -261,6 +342,12 @@ def chart_data_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, Any]
     Returns:
         Chart data result
     """
+    start_time = time.time()
+    symbol = config.get("symbol", "unknown")
+    timeframe = config.get("timeframe", "unknown")
+
+    logger.info(f"[{job_id}] Starting chart data task - {symbol} {timeframe}")
+
     try:
         # Initialize progress
         publish_progress(job_id, {
@@ -280,9 +367,15 @@ def chart_data_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, Any]
             "status": "done"
         })
 
+        elapsed = time.time() - start_time
+        candles = len(result.get("candles", []))
+        logger.info(f"[{job_id}] Chart data completed in {elapsed:.2f}s - {candles} candles")
+
         return result
 
     except SoftTimeLimitExceeded:
+        elapsed = time.time() - start_time
+        logger.error(f"[{job_id}] Chart data timed out after {elapsed:.2f}s")
         publish_progress(job_id, {
             "progress": 0,
             "total": 0,
@@ -292,6 +385,8 @@ def chart_data_task(self, config: Dict[str, Any], job_id: str) -> Dict[str, Any]
         return {"error": "Timeout", "status": "error"}
 
     except Exception as e:
+        elapsed = time.time() - start_time
+        logger.exception(f"[{job_id}] Chart data failed after {elapsed:.2f}s: {e}")
         publish_progress(job_id, {
             "progress": 0,
             "total": 0,
