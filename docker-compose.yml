@@ -1,0 +1,113 @@
+version: "3.8"
+
+services:
+  # Redis - Message broker and result backend
+  redis:
+    image: redis:7-alpine
+    container_name: backtest-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Backend - FastAPI server
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backtest-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - FASTAPI_HOST=0.0.0.0
+      - FASTAPI_PORT=8000
+      - JOB_TIMEOUT_SEC=1800
+      - MAX_STDOUT_SIZE=20971520
+      - PROJECT_ROOT=/app
+    volumes:
+      # Mount engine folder for access to Python scripts
+      - ./engine:/app/engine:ro
+      # Mount data folder
+      - ./engine/data:/app/engine/data:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Celery Worker - Background task processor
+  celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backtest-celery
+    command: celery -A app.services.celery_app.celery worker --loglevel=info -Q default
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - JOB_TIMEOUT_SEC=1800
+      - MAX_STDOUT_SIZE=20971520
+      - CELERY_CONCURRENCY=2
+      - PROJECT_ROOT=/app
+    volumes:
+      # Mount engine folder for access to Python scripts
+      - ./engine:/app/engine:ro
+      # Mount data folder
+      - ./engine/data:/app/engine/data:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Frontend - React app served by nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: backtest-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Flower - Celery monitoring (optional)
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backtest-flower
+    command: celery -A app.services.celery_app.celery flower --port=5555
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles:
+      - monitoring
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+
+networks:
+  default:
+    name: backtest-network
