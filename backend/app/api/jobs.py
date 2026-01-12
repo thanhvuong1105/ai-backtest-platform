@@ -253,58 +253,53 @@ async def stream_job_progress(job_id: str):
     """
     Stream job progress via Server-Sent Events (SSE).
 
-    Subscribes to Redis pub/sub channel for real-time progress updates.
+    Uses polling with asyncio.sleep to avoid blocking the event loop.
     """
+    import asyncio
+
     # Check if job exists
     progress = get_progress(job_id)
     if not progress:
         raise HTTPException(status_code=404, detail="Job not found")
 
     async def event_generator():
-        """Generate SSE events from Redis pub/sub"""
-        pubsub = subscribe_progress(job_id)
+        """Generate SSE events by polling Redis"""
+        last_progress = None
+        last_status = None
 
         try:
-            # Send initial progress
-            current_progress = get_progress(job_id)
-            if current_progress:
-                yield {
-                    "event": "progress",
-                    "data": json.dumps(current_progress)
-                }
+            while True:
+                # Get current progress from Redis
+                current_progress = get_progress(job_id)
 
-                # If already done, send done event and stop
-                if current_progress.get("status") in ["done", "error", "canceled"]:
-                    yield {
-                        "event": "done",
-                        "data": json.dumps(current_progress)
-                    }
-                    return
+                if current_progress:
+                    # Only send if progress changed
+                    current_status = current_progress.get("status")
+                    current_value = current_progress.get("progress", 0)
 
-            # Listen for updates
-            for message in pubsub.listen():
-                if message["type"] == "message":
-                    data = message["data"]
-                    try:
-                        progress_data = json.loads(data) if isinstance(data, str) else data
+                    if (current_progress != last_progress or
+                        current_status != last_status):
                         yield {
                             "event": "progress",
-                            "data": json.dumps(progress_data)
+                            "data": json.dumps(current_progress)
                         }
+                        last_progress = current_progress
+                        last_status = current_status
 
-                        # Stop if done
-                        if progress_data.get("status") in ["done", "error", "canceled"]:
-                            yield {
-                                "event": "done",
-                                "data": json.dumps(progress_data)
-                            }
-                            break
-                    except json.JSONDecodeError:
-                        pass
+                    # If done, send done event and stop
+                    if current_status in ["done", "error", "canceled"]:
+                        yield {
+                            "event": "done",
+                            "data": json.dumps(current_progress)
+                        }
+                        break
 
-        finally:
-            pubsub.unsubscribe()
-            pubsub.close()
+                # Poll interval - 200ms for responsive updates
+                await asyncio.sleep(0.2)
+
+        except asyncio.CancelledError:
+            # Client disconnected
+            pass
 
     return EventSourceResponse(event_generator())
 
