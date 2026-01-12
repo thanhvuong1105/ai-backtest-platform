@@ -214,7 +214,19 @@ export default function Dashboard() {
 
   const buildArray = (start, end, step) => {
     const arr = [];
-    for (let v = start; v <= end; v += step) arr.push(v);
+
+    // Validate inputs
+    if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(step)) {
+      return arr;
+    }
+    if (step <= 0) return arr;
+    if (start > end) return arr;
+
+    // Limit array size to prevent memory issues
+    const maxItems = 1000;
+    for (let v = start; v <= end && arr.length < maxItems; v += step) {
+      arr.push(v);
+    }
     return arr;
   };
 
