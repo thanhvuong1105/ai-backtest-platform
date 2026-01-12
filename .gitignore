@@ -19,6 +19,7 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+__MACOSX/
 
 # Data files (large)
 engine/data/*.csv
@@ -28,7 +29,6 @@ engine/data.zip
 # Env
 .env
 *.log
-<<<<<<< HEAD
 
 # Docker
 .dockerignore
@@ -56,7 +56,7 @@ dist/
 build/
 *.so
 *.dylib
-=======
-__MACOSX/
-.DS_Store
->>>>>>> 3c2d5d481a9c9665e2de3a13dfda1e0ecdb6a6ba
+
+# Archive
+backend/node_api_backup/
+backend/archive/
