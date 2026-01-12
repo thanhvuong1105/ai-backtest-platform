@@ -12,6 +12,24 @@ const __dirname = path.dirname(__filename);
 // project root (ai-backtest-platform)
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 
+// Get Python executable from venv
+import { existsSync } from "fs";
+const getPythonPath = () => {
+  const venvPython = path.join(PROJECT_ROOT, "venv", "bin", "python3");
+  if (existsSync(venvPython)) {
+    console.log("🐍 Using venv Python:", venvPython);
+    return venvPython;
+  }
+  const venvPythonWin = path.join(PROJECT_ROOT, "venv", "Scripts", "python.exe");
+  if (existsSync(venvPythonWin)) {
+    console.log("🐍 Using venv Python (Windows):", venvPythonWin);
+    return venvPythonWin;
+  }
+  console.warn("⚠️ venv not found, falling back to system python3");
+  return "python3";
+};
+const PYTHON_PATH = getPythonPath();
+
 // ================== APP ==================
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -114,7 +132,7 @@ app.post("/run-backtest", (req, res) => {
   }
 
   const python = spawn(
-    "python3",
+    PYTHON_PATH,
     ["engine/backtest_engine.py"],
     {
       cwd: PROJECT_ROOT,
@@ -163,7 +181,7 @@ app.post("/optimize", (req, res) => {
   if (errMsg) return res.status(400).json({ error: errMsg });
 
   const python = spawn(
-    "python3",
+    PYTHON_PATH,
     ["engine/run_optimizer.py"],
     {
       cwd: PROJECT_ROOT,
@@ -229,7 +247,7 @@ app.post("/ai-agent", (req, res) => {
   progressStore.set(jobId, { progress: 0, total: 0, status: "running" });
 
   const python = spawn(
-    "python3",
+    PYTHON_PATH,
     ["engine/ai_agent.py"],
     {
       cwd: PROJECT_ROOT,
@@ -421,7 +439,7 @@ app.post("/chart-data", (req, res) => {
   if (!cfg.strategy?.type) return res.status(400).json({ error: "strategy.type is required" });
 
   const python = spawn(
-    "python3",
+    PYTHON_PATH,
     ["engine/chart_data.py"],
     {
       cwd: PROJECT_ROOT,
