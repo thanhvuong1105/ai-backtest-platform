@@ -67,12 +67,12 @@ def optimize(cfg, top_n=5):
     # =========================
     # 5) Stability Guard (6.3C)
     # =========================
-    stability_rules = cfg.get("stability", {
+    stability_rules = cfg.get("stability") or {
         "minMedianPF": 1.05,
         "minWorstPF": 0.95,
         "maxWorstDD": 45,
         "maxPFStd": 0.6
-    })
+    }
 
     bucket = defaultdict(list)
     for r in passed:

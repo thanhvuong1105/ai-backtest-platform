@@ -356,12 +356,12 @@ def ai_recommend(cfg: Dict[str, Any]) -> Dict[str, Any]:
     min_tf = cfg.get("minTFAgree", 2)
     passed = apply_tf_agreement(passed, min_tf=min_tf)
 
-    stability_rules = cfg.get("stability", {
+    stability_rules = cfg.get("stability") or {
         "minMedianPF": 1.05,
         "minWorstPF": 0.95,
         "maxWorstDD": 45,
         "maxPFStd": 0.6
-    })
+    }
 
     bucket = defaultdict(list)
     for r in passed:

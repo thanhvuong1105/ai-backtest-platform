@@ -28,6 +28,10 @@ def pass_stability(stab, rules):
     if stab is None:
         return False
 
+    # Handle None or empty rules - use defaults
+    if not rules:
+        rules = {}
+
     if stab["medianPF"] < rules.get("minMedianPF", 1.0):
         return False
     if stab["worstPF"] < rules.get("minWorstPF", 0.9):
