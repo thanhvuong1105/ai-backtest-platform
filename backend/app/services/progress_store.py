@@ -36,6 +36,7 @@ PROGRESS_KEY_PREFIX = "job:progress:"
 RESULT_KEY_PREFIX = "job:result:"
 CANCEL_KEY_PREFIX = "job:cancel:"
 PROGRESS_CHANNEL_PREFIX = "job:progress:channel:"
+TASK_ID_KEY_PREFIX = "job:taskid:"  # Maps job_id -> celery_task_id
 
 # Default TTL for keys (24 hours)
 DEFAULT_TTL = 86400
@@ -182,6 +183,35 @@ def subscribe_progress(job_id: str):
     return pubsub
 
 
+def set_task_id(job_id: str, task_id: str, ttl: int = DEFAULT_TTL) -> None:
+    """
+    Store mapping of job_id to Celery task_id.
+
+    Args:
+        job_id: The job ID (our application ID)
+        task_id: The Celery task ID
+        ttl: Time-to-live in seconds
+    """
+    r = get_redis()
+    key = f"{TASK_ID_KEY_PREFIX}{job_id}"
+    r.setex(key, ttl, task_id)
+
+
+def get_task_id(job_id: str) -> Optional[str]:
+    """
+    Get Celery task_id for a job.
+
+    Args:
+        job_id: The job ID
+
+    Returns:
+        Celery task ID or None if not found
+    """
+    r = get_redis()
+    key = f"{TASK_ID_KEY_PREFIX}{job_id}"
+    return r.get(key)
+
+
 def cleanup_job(job_id: str) -> None:
     """
     Clean up all Redis keys for a job.
@@ -193,5 +223,6 @@ def cleanup_job(job_id: str) -> None:
     r.delete(
         f"{PROGRESS_KEY_PREFIX}{job_id}",
         f"{RESULT_KEY_PREFIX}{job_id}",
-        f"{CANCEL_KEY_PREFIX}{job_id}"
+        f"{CANCEL_KEY_PREFIX}{job_id}",
+        f"{TASK_ID_KEY_PREFIX}{job_id}"
     )

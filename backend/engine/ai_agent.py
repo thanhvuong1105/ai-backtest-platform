@@ -9,7 +9,7 @@ AI Agent đơn giản:
 import json
 import sys
 import os
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Optional
 from collections import defaultdict
 
 # Use ThreadPoolExecutor for better performance on macOS
@@ -239,7 +239,20 @@ def build_comment(best: Dict[str, Any]) -> str:
     )
 
 
-def ai_recommend(cfg: Dict[str, Any]) -> Dict[str, Any]:
+def ai_recommend(
+    cfg: Dict[str, Any],
+    job_id: str = "",
+    progress_cb: Optional[Callable[[str, int, int, str, Dict], None]] = None
+) -> Dict[str, Any]:
+    """
+    AI Agent recommendation with optional progress callback.
+
+    Args:
+        cfg: Configuration dict
+        job_id: Job ID for progress tracking
+        progress_cb: Optional callback(job_id, progress, total, status, extra)
+                    If provided, will be called to report progress and check cancel.
+    """
     def tf_to_minutes(tf: str) -> int:
         if not tf:
             return 60
@@ -255,10 +268,17 @@ def ai_recommend(cfg: Dict[str, Any]) -> Dict[str, Any]:
             pass
         return 60
 
+    # Helper to emit progress - use callback if provided, else fall back to stdout
+    def emit_progress(progress: int, total: int, extra: Dict = None):
+        if progress_cb:
+            # This will check cancel flag and raise InterruptedError if canceled
+            progress_cb(job_id, progress, total, "running", extra or {})
+        elif "AI_PROGRESS" in os.environ:
+            print(json.dumps({"progress": progress, "total": total, **(extra or {})}))
+            sys.stdout.flush()
+
     # Emit initial progress (preparing phase)
-    if "AI_PROGRESS" in os.environ:
-        print(json.dumps({"progress": 0, "total": 1, "phase": "preparing"}))
-        sys.stdout.flush()
+    emit_progress(0, 1, {"phase": "preparing"})
 
     top_n = cfg.get("topN", 50)
     # Build runs trước để biết total
@@ -266,9 +286,7 @@ def ai_recommend(cfg: Dict[str, Any]) -> Dict[str, Any]:
     total = len(runs)
 
     # Emit progress after build_runs
-    if "AI_PROGRESS" in os.environ:
-        print(json.dumps({"progress": 0, "total": total, "phase": "running"}))
-        sys.stdout.flush()
+    emit_progress(0, total, {"phase": "running"})
     props = cfg.get("properties", {}) or {}
 
     def build_costs(base_costs):
@@ -328,15 +346,15 @@ def ai_recommend(cfg: Dict[str, Any]) -> Dict[str, Any]:
             completed += 1
             # Progress emit (throttled to every 200ms to avoid spam)
             current_time = __import__('time').time()
-            if "AI_PROGRESS" in os.environ and (current_time - last_progress_time >= 0.2 or completed == total):
-                print(json.dumps({"progress": completed, "total": total}))
-                sys.stdout.flush()
+            if current_time - last_progress_time >= 0.2 or completed == total:
+                # emit_progress will check cancel flag via progress_cb
+                emit_progress(completed, total)
                 last_progress_time = current_time
 
             try:
                 result = future.result()
                 results.append(result)
-            except Exception as e:
+            except Exception:
                 # Log error but continue with other runs
                 if "AI_PROGRESS" in os.environ:
                     print(json.dumps({"progress": completed, "total": total}), file=sys.stderr)

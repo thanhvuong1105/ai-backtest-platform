@@ -77,7 +77,12 @@ def run_optimizer(
             - all: All results
             - passed: Filtered results
     """
-    return _optimize_core(config, top_n=config.get("topN", 50))
+    return _optimize_core(
+        config,
+        top_n=config.get("topN", 50),
+        job_id=job_id,
+        progress_cb=progress_cb
+    )
 
 
 def run_ai_agent(
@@ -106,58 +111,7 @@ def run_ai_agent(
             - all: All results (limited)
             - total: Total number of runs
     """
-    # Import here to avoid circular imports
-    import json
-    import sys
-    import os
-
-    # Create a wrapper that calls progress_cb if provided
-    original_stdout = sys.stdout
-
-    if progress_cb:
-        class ProgressCapture:
-            """Capture stdout to intercept progress updates."""
-            def __init__(self, job_id, callback, original):
-                self.job_id = job_id
-                self.callback = callback
-                self.original = original
-                self.buffer = ""
-
-            def write(self, text):
-                self.buffer += text
-                # Process complete lines
-                while "\n" in self.buffer:
-                    line, self.buffer = self.buffer.split("\n", 1)
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                        if "progress" in data and "total" in data:
-                            self.callback(
-                                self.job_id,
-                                data["progress"],
-                                data["total"],
-                                "running",
-                                {}
-                            )
-                    except (json.JSONDecodeError, KeyError):
-                        pass
-
-            def flush(self):
-                pass
-
-        # Enable progress output
-        os.environ["AI_PROGRESS"] = "1"
-        sys.stdout = ProgressCapture(job_id, progress_cb, original_stdout)
-
-    try:
-        result = _ai_recommend_core(config)
-        return result
-    finally:
-        sys.stdout = original_stdout
-        if progress_cb:
-            os.environ.pop("AI_PROGRESS", None)
+    return _ai_recommend_core(config, job_id=job_id, progress_cb=progress_cb)
 
 
 def generate_chart_data(config: Dict[str, Any]) -> Dict[str, Any]:

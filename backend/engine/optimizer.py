@@ -3,6 +3,7 @@ from .multi_runner import run_multi
 from .filtering import filter_results
 from .stability import stability_metrics, pass_stability
 from collections import defaultdict
+from typing import Callable, Dict, Optional
 
 
 def apply_tf_agreement(passed, min_tf=2):
@@ -26,7 +27,12 @@ def apply_tf_agreement(passed, min_tf=2):
     return agreed
 
 
-def optimize(cfg, top_n=5):
+def optimize(
+    cfg,
+    top_n=5,
+    job_id: str = "",
+    progress_cb: Optional[Callable[[str, int, int, str, Dict], None]] = None
+):
     """
     Level 6 Optimizer (FULL)
     - Build grid
@@ -35,6 +41,12 @@ def optimize(cfg, top_n=5):
     - Multi-timeframe agreement (6.3B)
     - Stability guard (6.3C)
     - Pick best / top
+
+    Args:
+        cfg: Optimization config
+        top_n: Number of top results to return
+        job_id: Job ID for progress tracking
+        progress_cb: Optional callback(job_id, progress, total, status, extra)
     """
 
     # =========================
@@ -45,7 +57,7 @@ def optimize(cfg, top_n=5):
     # =========================
     # 2) Run all backtests
     # =========================
-    all_results = run_multi({"runs": runs})  # LIST[dict]
+    all_results = run_multi({"runs": runs}, job_id=job_id, progress_cb=progress_cb)
 
     # =========================
     # 3) Quality filters

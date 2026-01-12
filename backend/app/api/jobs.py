@@ -32,7 +32,9 @@ from app.services.progress_store import (
     get_result,
     set_cancel_flag,
     subscribe_progress,
-    set_progress
+    set_progress,
+    set_task_id,
+    get_task_id,
 )
 from app.services.celery_app import celery
 
@@ -182,7 +184,9 @@ async def run_backtest(request: BacktestRequest, sync: bool = Query(False)):
             raise HTTPException(status_code=500, detail=str(e))
     else:
         # Async execution via Celery
-        run_backtest_task.delay(request.strategy, job_id)
+        result = run_backtest_task.delay(request.strategy, job_id)
+        # Store task_id mapping for proper revoke support
+        set_task_id(job_id, result.id)
         return {"jobId": job_id}
 
 
@@ -202,7 +206,9 @@ async def optimize(request: OptimizeRequest):
         raise HTTPException(status_code=400, detail=error)
 
     job_id = generate_job_id()
-    optimize_task.delay(cfg, job_id)
+    result = optimize_task.delay(cfg, job_id)
+    # Store task_id mapping for proper revoke support
+    set_task_id(job_id, result.id)
 
     return {"jobId": job_id}
 
@@ -228,7 +234,9 @@ async def ai_agent(request: OptimizeRequest):
     set_progress(job_id, {"progress": 0, "total": 0, "status": "running"})
 
     # Enqueue task
-    ai_agent_task.delay(cfg, job_id)
+    result = ai_agent_task.delay(cfg, job_id)
+    # Store task_id mapping for proper revoke support
+    set_task_id(job_id, result.id)
 
     return {"jobId": job_id}
 
@@ -343,7 +351,7 @@ async def cancel_job(job_id: str):
     Returns:
     - { success: true }
     """
-    # Set cancel flag
+    # Set cancel flag - this will be checked by progress_cb in engine
     set_cancel_flag(job_id)
 
     # Update progress
@@ -354,12 +362,13 @@ async def cancel_job(job_id: str):
         "error": "Canceled by user"
     })
 
-    # Try to revoke Celery task (best effort)
-    try:
-        # Note: Celery task revocation requires task ID, not job ID
-        # This is a best-effort cancellation
-        celery.control.revoke(job_id, terminate=True)
-    except Exception:
-        pass  # Ignore revoke errors
+    # Try to revoke Celery task using proper task_id
+    task_id = get_task_id(job_id)
+    if task_id:
+        try:
+            # Use actual Celery task_id for revoke
+            celery.control.revoke(task_id, terminate=True, signal='SIGTERM')
+        except Exception:
+            pass  # Ignore revoke errors - cancel flag will handle it
 
     return {"success": True}
