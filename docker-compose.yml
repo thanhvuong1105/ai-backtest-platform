@@ -34,9 +34,7 @@ services:
       - MAX_STDOUT_SIZE=20971520
       - PROJECT_ROOT=/app
     volumes:
-      # Mount engine folder for access to Python scripts
-      - ./engine:/app/engine:ro
-      # Mount data folder
+      # Mount data folder for market data CSVs
       - ./engine/data:/app/engine/data:ro
     depends_on:
       redis:
@@ -64,9 +62,7 @@ services:
       - CELERY_CONCURRENCY=2
       - PROJECT_ROOT=/app
     volumes:
-      # Mount engine folder for access to Python scripts
-      - ./engine:/app/engine:ro
-      # Mount data folder
+      # Mount data folder for market data CSVs
       - ./engine/data:/app/engine/data:ro
     depends_on:
       redis:

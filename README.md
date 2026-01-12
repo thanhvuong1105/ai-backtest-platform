@@ -11,21 +11,24 @@ ai-backtest-platform/
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   └── package.json
-├── backend/            # FastAPI backend + Celery workers
+├── backend/            # FastAPI backend + Celery workers + Engine
 │   ├── app/
 │   │   ├── main.py           # FastAPI application
 │   │   ├── api/              # API routes
 │   │   └── services/         # Celery tasks, Redis helpers
+│   ├── engine/               # Core Python backtest engine (importable package)
+│   │   ├── __init__.py       # Public API: run_backtest, run_optimizer, etc.
+│   │   ├── ai_agent.py
+│   │   ├── backtest_engine.py
+│   │   ├── chart_data.py
+│   │   ├── optimizer.py
+│   │   ├── strategies/       # Strategy implementations
+│   │   └── ...               # Helper modules
 │   ├── tests/                # Pytest tests
 │   ├── node_api_backup/      # Archived Node.js API (reference)
-│   ├── archive/              # Archived test files
 │   ├── Dockerfile
 │   └── requirements.txt
-├── engine/             # Core Python backtest engine (DO NOT MODIFY)
-│   ├── ai_agent.py
-│   ├── backtest_engine.py
-│   ├── chart_data.py
-│   ├── run_optimizer.py
+├── engine/             # Market data and legacy scripts
 │   └── data/           # Market data CSV files
 ├── docker-compose.yml  # Docker orchestration
 ├── .env.example        # Environment variables template
@@ -173,9 +176,35 @@ docker-compose down -v
                                                │
                                         ┌──────▼──────┐
                                         │   Engine    │
-                                        │ (Subprocess)│
+                                        │ (Direct Import)│
                                         └─────────────┘
 ```
+
+## Engine Package
+
+The engine is now an importable Python package within `backend/engine/`. It can be used directly:
+
+```python
+from engine import run_backtest, run_ai_agent, load_data
+
+# Run a backtest
+result = run_backtest({
+    "meta": {"symbols": ["BTCUSDT"], "timeframe": "1h"},
+    "strategy": {"type": "ema_cross", "params": {"emaFast": 12, "emaSlow": 26}},
+    "initial_equity": 10000
+})
+
+# Load market data
+df = load_data("BTCUSDT", "1h")
+```
+
+### Public API
+
+- `run_backtest(config)` - Run a single backtest
+- `run_optimizer(config)` - Run parameter optimization
+- `run_ai_agent(config)` - Run AI-powered optimization
+- `generate_chart_data(config)` - Generate chart visualization data
+- `load_data(symbol, timeframe)` - Load OHLCV data
 
 ## Migration Notes
 
@@ -183,9 +212,9 @@ This project was migrated from Node.js/Express to Python/FastAPI:
 
 - Original `api/server.js` → `backend/app/` (FastAPI)
 - Same API contract maintained for frontend compatibility
-- Engine scripts (`engine/*.py`) unchanged
-- Celery replaces in-process spawning for background jobs
-- Redis replaces in-memory Maps for progress/result storage
+- Engine refactored from subprocess to importable package
+- Celery tasks import engine functions directly (no subprocess overhead)
+- Redis used for progress/result storage
 
 ## License
 

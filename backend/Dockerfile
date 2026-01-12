@@ -24,8 +24,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app/ ./app/
 
-# Copy engine folder (mounted via docker-compose, but include for standalone builds)
-# Note: In docker-compose, engine is mounted from parent directory
+# Copy engine package (now part of backend)
+COPY engine/ ./engine/
 
 # Expose port for FastAPI
 EXPOSE 8000
