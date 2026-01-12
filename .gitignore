@@ -1,5 +1,6 @@
 # Node
 node_modules/
+package-lock*.json
 
 # Python
 __pycache__/
@@ -7,11 +8,13 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+*.egg-info/
 
 # IDE
 .history/
 .vscode/
 .idea/
+.claude/
 
 # OS
 .DS_Store
@@ -20,7 +23,35 @@ Thumbs.db
 # Data files (large)
 engine/data/*.csv
 engine/data/*/*.csv
+engine/data.zip
 
 # Env
 .env
 *.log
+
+# Docker
+.dockerignore
+
+# Rust engine (removed - Python only)
+rust_engine/
+build_rust.sh
+RUST_SETUP.md
+test_rust_engine.py
+
+# Test files
+test_*.py
+test_*.json
+your_config.json
+profile_test.py
+quick_test.py
+benchmark_*.py
+download_binance_data.py
+
+# Git backup
+.git_backup/
+
+# Build artifacts
+dist/
+build/
+*.so
+*.dylib
