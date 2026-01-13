@@ -224,6 +224,15 @@ async def ai_agent(request: OptimizeRequest):
     - { jobId: "..." }
     """
     cfg = request.model_dump(by_alias=True)
+
+    # Log the request for debugging
+    import logging
+    logger = logging.getLogger(__name__)
+    strategy_type = cfg.get("strategy", {}).get("type", "unknown")
+    symbols = cfg.get("symbols", [])
+    timeframes = cfg.get("timeframes", [])
+    logger.info(f"[AI-Agent] Received request: strategy={strategy_type}, symbols={symbols}, timeframes={timeframes}")
+
     error = validate_optimize_config(cfg)
     if error:
         raise HTTPException(status_code=400, detail=error)
@@ -237,6 +246,8 @@ async def ai_agent(request: OptimizeRequest):
     result = ai_agent_task.delay(cfg, job_id)
     # Store task_id mapping for proper revoke support
     set_task_id(job_id, result.id)
+
+    logger.info(f"[AI-Agent] Enqueued job {job_id} (task_id={result.id}) for strategy={strategy_type}")
 
     return {"jobId": job_id}
 
