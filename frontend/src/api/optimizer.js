@@ -7,6 +7,13 @@ const API_BASE = import.meta.env.VITE_API_URL || "/api";
 const DEFAULT_TIMEOUT = 30000; // 30 seconds for normal requests
 const LONG_TIMEOUT = 60000; // 60 seconds for long operations
 
+// Quant Brain modes
+export const QUANT_BRAIN_MODE = {
+  ULTRA: "ultra", // Maximum speed, rank by FastScore (PnL/DD)
+  FAST: "fast",   // Quick exploration, rank by PnL
+  BRAIN: "brain", // Deep learning, rank by BrainScore
+};
+
 /**
  * Create AbortController with timeout
  */
@@ -108,6 +115,53 @@ export async function getAiAgentResult(jobId) {
 
 export async function cancelAiAgent(jobId) {
   return postJson(`/ai-agent/cancel/${jobId}`, {}, 10000); // 10s timeout for cancel
+}
+
+/**
+ * Start Quant AI Brain optimization
+ * Self-learning optimization with long-term memory
+ *
+ * Supports three modes:
+ * - "ultra": Maximum speed, rank by FastScore (PnL/DD), minimal validation
+ * - "fast": Quick exploration, rank by PnL, no robustness, no memory write
+ * - "brain": Deep learning, rank by BrainScore, robustness required, writes to memory
+ *
+ * @param {Object} cfg - Configuration object
+ * @param {string} cfg.mode - "ultra", "fast", or "brain" (default: "fast")
+ */
+export async function startQuantBrain(cfg) {
+  return postJson("/quant-brain", cfg, LONG_TIMEOUT); // returns {jobId}
+}
+
+/**
+ * Start Quant Brain in ULTRA mode (maximum speed)
+ * - Rank by FastScore = PnL / MaxDD
+ * - Minimal coherence check
+ * - No robustness, no memory write
+ * - Early termination at 50% DD
+ */
+export async function startQuantBrainUltra(cfg) {
+  return startQuantBrain({ ...cfg, mode: "ultra" });
+}
+
+/**
+ * Start Quant Brain in FAST mode (quick exploration)
+ * - Rank by PnL (highest profit)
+ * - No robustness testing
+ * - No memory write
+ */
+export async function startQuantBrainFast(cfg) {
+  return startQuantBrain({ ...cfg, mode: "fast" });
+}
+
+/**
+ * Start Quant Brain in BRAIN mode (deep learning)
+ * - Rank by BrainScore (risk-adjusted)
+ * - Robustness testing required
+ * - Writes to ParamMemory
+ */
+export async function startQuantBrainDeep(cfg) {
+  return startQuantBrain({ ...cfg, mode: "brain" });
 }
 
 /**

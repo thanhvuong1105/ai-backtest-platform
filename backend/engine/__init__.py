@@ -17,7 +17,10 @@ from typing import Any, Callable, Dict, Optional
 # Import core functions
 from .backtest_engine import run_backtest as _run_backtest_core
 from .optimizer import optimize as _optimize_core
+# Use original AI agent (vectorized version disabled for accuracy)
 from .ai_agent import ai_recommend as _ai_recommend_core
+# Quant Brain - Self-learning optimization engine
+from .quant_brain import quant_brain_recommend as _quant_brain_core
 from .chart_data import get_chart_data as _get_chart_data_core
 from .data_loader import load_csv
 
@@ -114,6 +117,37 @@ def run_ai_agent(
     return _ai_recommend_core(config, job_id=job_id, progress_cb=progress_cb)
 
 
+def run_quant_brain(
+    config: Dict[str, Any],
+    job_id: str = "",
+    progress_cb: Optional[Callable[[str, int, int, str, Dict], None]] = None
+) -> Dict[str, Any]:
+    """
+    Run Quant AI Brain - Self-learning optimization engine.
+
+    Features:
+    - Long-term genome memory (ParamMemory)
+    - Market regime classification
+    - Evolutionary genome optimization
+    - Coherence validation
+    - Robustness filtering
+
+    Args:
+        config: Configuration dict (same as AI agent)
+        job_id: Job ID for progress tracking
+        progress_cb: Optional callback function
+
+    Returns:
+        Result dict with:
+            - success: bool
+            - strategy_hash: str
+            - market_regime: str
+            - bestGenomes: List of top genomes with explanations
+            - meta: { total_tested, from_memory, robustness_passed, ... }
+    """
+    return _quant_brain_core(config, job_id=job_id, progress_cb=progress_cb)
+
+
 def generate_chart_data(config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Generate chart data for visualization.
@@ -160,6 +194,7 @@ __all__ = [
     "run_backtest",
     "run_optimizer",
     "run_ai_agent",
+    "run_quant_brain",
     "generate_chart_data",
     "load_data",
 ]

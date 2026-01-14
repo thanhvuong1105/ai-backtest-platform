@@ -1,12 +1,22 @@
 # engine/backtest_engine.py
 import json
 import sys
+import os
 from datetime import timezone, timedelta
+
+import numpy as np
+import pandas as pd
 
 from .data_loader import load_csv
 from .metrics import calculate_metrics
-from .strategies.factory import create_strategy
-import pandas as pd
+from .strategies.factory import create_strategy, USE_FAST_STRATEGY, FAST_AVAILABLE
+
+# Try to import Numba fast backtest loop
+try:
+    from .numba_indicators import run_backtest_loop
+    NUMBA_BACKTEST_AVAILABLE = True
+except ImportError:
+    NUMBA_BACKTEST_AVAILABLE = False
 
 # UTC+7 Ho Chi Minh timezone
 TZ_HCM = timezone(timedelta(hours=7))
@@ -36,14 +46,17 @@ def run_backtest(strategy_config):
     strategy_params = strategy_config["strategy"]["params"]
 
     # ===== COST CONFIG =====
-    fee_rate = strategy_config.get("costs", {}).get("fee", 0.0)
-    slippage_ticks = strategy_config.get("costs", {}).get("slippage", 0.0)
+    # Use `or {}` to handle explicit None values
+    costs = strategy_config.get("costs") or {}
+    fee_rate = costs.get("fee", 0.0)
+    slippage_ticks = costs.get("slippage", 0.0)
 
     # ===== ACCOUNT CONFIG =====
     initial_equity = float(strategy_config.get("initial_equity", 10000.0))
     # order size config: percent of equity hoặc fixed USDT
-    props = strategy_config.get("properties", {})
-    order_cfg = props.get("orderSize", {})
+    # Use `or {}` to handle explicit None values
+    props = strategy_config.get("properties") or {}
+    order_cfg = props.get("orderSize") or {}
     order_type = (order_cfg.get("type") or "percent").lower()
     order_value = float(order_cfg.get("value", strategy_config.get("positionSize", 1.0)))
     pyramiding = max(int(props.get("pyramiding", 1) or 1), 1)
@@ -56,6 +69,7 @@ def run_backtest(strategy_config):
 
     # ===== LOAD DATA (must be before tick_size calculation) =====
     df = strategy_config.get("df")
+    df_is_preprocessed = strategy_config.get("_preprocessed", False)
     if df is None:
         df = load_csv(symbol, timeframe)
 
@@ -80,37 +94,43 @@ def run_backtest(strategy_config):
     from_date_ts = pd.to_datetime(from_date) if from_date else None
     to_date_ts = pd.to_datetime(to_date) if to_date else None
 
-    # Ensure time column is datetime
+    # ===== HANDLE DATAFRAME =====
+    # IMPORTANT: Always copy because cached DataFrame is shared across threads
+    # But skip heavy processing if already pre-processed by multi_runner
     if df is not None and not df.empty:
         df = df.copy()
-        df["time"] = pd.to_datetime(df["time"])
 
-        # Filter data up to to_date for indicator calculation
-        if to_date_ts is not None:
-            df = df[df["time"] <= to_date_ts].reset_index(drop=True)
+        if not df_is_preprocessed:
+            # Only do date processing if not already done
+            if not pd.api.types.is_datetime64_any_dtype(df["time"]):
+                df["time"] = pd.to_datetime(df["time"])
 
-        # ===== PERFORMANCE OPTIMIZATION =====
-        # Instead of using ALL historical data (which can be 40K+ candles),
-        # we use a lookback buffer before from_date for indicator warmup.
-        # This gives identical results but is MUCH faster.
-        #
-        # Lookback buffer: 500 bars is enough for most indicators:
-        # - EMA 200: needs ~200 bars for convergence
-        # - RSI 14: needs ~14 bars
-        # - ATR 14: needs ~14 bars
-        # - SuperTrend: needs ATR warmup (~50 bars)
-        # - 500 bars provides 2.5x safety margin
-        #
-        INDICATOR_WARMUP_BARS = 500
+            # Filter data up to to_date for indicator calculation
+            if to_date_ts is not None:
+                df = df[df["time"] <= to_date_ts].reset_index(drop=True)
 
-        if from_date_ts is not None:
-            # Find index of from_date
-            mask = df["time"] >= from_date_ts
-            if mask.any():
-                from_idx = mask.idxmax()
-                # Keep warmup buffer before from_date for indicator calculation
-                start_idx = max(0, from_idx - INDICATOR_WARMUP_BARS)
-                df = df.iloc[start_idx:].reset_index(drop=True)
+            # ===== PERFORMANCE OPTIMIZATION =====
+            # Instead of using ALL historical data (which can be 40K+ candles),
+            # we use a lookback buffer before from_date for indicator warmup.
+            # This gives identical results but is MUCH faster.
+            #
+            # Lookback buffer: 300 bars is enough for most indicators:
+            # - EMA 200: needs ~200 bars for convergence
+            # - RSI 14: needs ~14 bars
+            # - ATR 14: needs ~14 bars
+            # - SuperTrend: needs ATR warmup (~50 bars)
+            # - 300 bars provides 1.5x safety margin (optimized for speed)
+            #
+            INDICATOR_WARMUP_BARS = 300
+
+            if from_date_ts is not None:
+                # Find index of from_date
+                mask = df["time"] >= from_date_ts
+                if mask.any():
+                    from_idx = mask.idxmax()
+                    # Keep warmup buffer before from_date for indicator calculation
+                    start_idx = max(0, from_idx - INDICATOR_WARMUP_BARS)
+                    df = df.iloc[start_idx:].reset_index(drop=True)
 
     # Cắt window nếu có (vd: lấy N bar cuối) - for debugging only
     window = strategy_config.get("window")
@@ -163,6 +183,125 @@ def run_backtest(strategy_config):
                 "trades": []
             }
 
+    # ===== FAST NUMBA BACKTEST PATH =====
+    # Use Numba-optimized backtest loop if available and strategy supports it
+    use_fast_backtest = (
+        NUMBA_BACKTEST_AVAILABLE and
+        USE_FAST_STRATEGY and
+        FAST_AVAILABLE and
+        strategy_type == "rf_st_rsi" and
+        hasattr(strategy, 'get_indicator_arrays')
+    )
+
+    if use_fast_backtest:
+        try:
+            # Get arrays from strategy
+            indicators = strategy.get_indicator_arrays()
+            price_arrays = strategy.get_price_arrays()
+
+            # Determine order type for Numba (0=percent, 1=fixed)
+            order_type_num = 0 if order_type == "percent" else 1
+
+            # Calculate slippage
+            slip = slippage_ticks * tick_size
+
+            # Run Numba-optimized backtest loop
+            (entry_bars, exit_bars, entry_prices, exit_prices,
+             sizes, pnls, entry_types, equity_arr) = run_backtest_loop(
+                n=len(df),
+                execution_start_idx=execution_start_idx,
+                price_open=price_arrays["open"],
+                price_close=price_arrays["close"],
+                dual_flip_long=indicators["dual_flip_long"],
+                rsi_bull_div_signal=indicators["rsi_bull_div_signal"],
+                rf_state=indicators["rf_state"],
+                rf_lb=indicators["rf_lb"],
+                rf_sl_lband=indicators["rf_sl_lband"],
+                rf_sl_flip_sell=indicators["rf_sl_flipSell"],
+                st_sl_trend=indicators["st_sl_trend"],
+                st_sl_flip_sell=indicators["st_sl_flipSell"],
+                rf_sl_state=indicators["rf_sl_state"],
+                st_tp_dual_flip_sell=indicators["st_tp_dual_flipSell"],
+                st_tp_rsi_flip_sell=indicators["st_tp_rsi_flipSell"],
+                show_entry_long=strategy_params.get("showDualFlip", True),
+                show_entry_rsi=strategy_params.get("showRSI", True),
+                rr_mult_dual=float(strategy_params.get("tp_dual_rr_mult", 1.3)),
+                rr_mult_rsi=float(strategy_params.get("tp_rsi_rr_mult", 1.3)),
+                fee_rate=fee_rate,
+                slippage=slip,
+                initial_equity=initial_equity,
+                order_type=order_type_num,
+                order_value=order_value,
+                pyramiding=pyramiding,
+                compound=compound,
+            )
+
+            # Convert results to trade list format
+            trades = []
+            time_arr = price_arrays["time"]
+            for j in range(len(entry_bars)):
+                entry_bar = entry_bars[j]
+                exit_bar = exit_bars[j]
+                entry_time = to_hcm_time(str(time_arr[entry_bar]))
+                exit_time = to_hcm_time(str(time_arr[exit_bar]))
+                entry_price = entry_prices[j]
+                exit_price = exit_prices[j]
+                size = sizes[j]
+                pnl = pnls[j]
+                notional = entry_price * size
+                pnl_pct = (pnl / notional) * 100 if notional else 0.0
+                entry_type_str = "dual_flip" if entry_types[j] == 0 else "rsi"
+
+                entry_fee = entry_price * fee_rate * size
+                exit_fee = exit_price * fee_rate * size
+
+                trades.append({
+                    "side": "Long",
+                    "entry_type": entry_type_str,
+                    "entry_time": entry_time,
+                    "entry_price": round(entry_price, 6),
+                    "entry_fee": round(entry_fee, 6),
+                    "exit_time": exit_time,
+                    "exit_price": round(exit_price, 6),
+                    "exit_fee": round(exit_fee, 6),
+                    "size": size,
+                    "notional": round(notional, 6),
+                    "pnl": round(pnl, 6),
+                    "pnl_pct": round(pnl_pct, 6),
+                })
+
+            # Build equity curve (only for execution range)
+            equity_curve = []
+            for i in range(execution_start_idx, len(df)):
+                time_hcm = to_hcm_time(str(time_arr[i]))
+                equity_curve.append({
+                    "time": time_hcm,
+                    "equity": round(equity_arr[i], 6)
+                })
+
+            # Calculate metrics
+            summary = calculate_metrics(
+                trades=trades,
+                equity_curve=equity_curve,
+                initial_equity=initial_equity
+            )
+
+            return {
+                "meta": {
+                    "strategyId": f"{strategy_type}_v1",
+                    "strategyName": strategy_type,
+                    "symbol": symbol,
+                    "timeframe": timeframe
+                },
+                "summary": summary,
+                "equityCurve": equity_curve,
+                "trades": trades
+            }
+        except Exception as e:
+            # Fall back to regular backtest on error
+            pass
+
+    # ===== REGULAR BACKTEST PATH (fallback) =====
     # ===== ACCOUNT =====
     equity = initial_equity
 

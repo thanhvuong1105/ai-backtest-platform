@@ -313,7 +313,6 @@ export default function DebugView() {
                   onChange={(e) => handleStrategyChange(e.target.value)}
                   style={inputStyle}
                 >
-                  <option value="ema_cross">EMA Cross</option>
                   <option value="rf_st_rsi">RF + ST + RSI Divergence</option>
                 </select>
               </div>

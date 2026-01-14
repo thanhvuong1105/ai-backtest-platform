@@ -32,14 +32,28 @@ def calculate_metrics(trades, equity_curve, initial_equity):
 
     final_equity = equity_curve[-1]["equity"]
 
-    # Drawdown
+    # Drawdown calculation
+    # Track peak equity and calculate drawdown from peak
     peak = initial_equity
-    max_dd = 0
+    max_dd_absolute = 0  # Absolute dollar amount
+    max_dd_pct = 0  # Percentage from peak
 
     for e in equity_curve:
-        peak = max(peak, e["equity"])
-        dd = e["equity"] - peak
-        max_dd = min(max_dd, dd)
+        current_equity = e["equity"]
+        peak = max(peak, current_equity)
+
+        # Drawdown is (current - peak) / peak
+        dd_absolute = current_equity - peak
+        if peak > 0:
+            dd_pct = abs(dd_absolute) / peak * 100
+        else:
+            dd_pct = 0
+
+        # Track maximum drawdown
+        if dd_absolute < max_dd_absolute:
+            max_dd_absolute = dd_absolute
+        if dd_pct > max_dd_pct:
+            max_dd_pct = dd_pct
 
     avg_win = gross_profit / win_trades if win_trades else 0
     avg_loss = sum(losses) / loss_trades if loss_trades else 0
@@ -66,6 +80,6 @@ def calculate_metrics(trades, equity_curve, initial_equity):
         "avgLoss": avg_loss,
         "expectancy": expectancy,
 
-        "maxDrawdown": max_dd,
-        "maxDrawdownPct": abs(max_dd) / initial_equity * 100
+        "maxDrawdown": max_dd_absolute,
+        "maxDrawdownPct": max_dd_pct
     }

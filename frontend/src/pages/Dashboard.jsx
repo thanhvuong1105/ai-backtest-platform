@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
-import { startAiAgent, getAiAgentResult, cancelAiAgent, createProgressStream } from "../api/optimizer";
+import { startAiAgent, startQuantBrain, getAiAgentResult, cancelAiAgent, createProgressStream } from "../api/optimizer";
 
 import Header from "../components/Header";
 import StrategyTable from "../components/StrategyTable";
@@ -21,30 +21,6 @@ import {
 export default function Dashboard() {
   const strategyConfigs = [
     {
-      id: "ema",
-      name: "EMA Cross Sweep",
-      subtitle: "EMA crossover optimizer",
-      type: "ema_cross",
-      supported: true,
-      defaults: {
-        symbol: "BTCUSDT",
-        timeframes: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h"],
-        emaFastRange: { start: 1, end: 20, step: 2 },
-        emaSlowRange: { start: 10, end: 50, step: 5 },
-        minTrades: 1,
-        minPF: 0.5,
-        maxDD: 100,
-        properties: {
-          initialCapital: 1000000,
-          baseCurrency: "USDT",
-          orderSize: { value: 1000, type: "fixed" }, // 1000 USDT cho 1 vị thế mặc định
-          pyramiding: 2,
-          commission: { value: 0, type: "percent" },
-          slippage: 0,
-        },
-      },
-    },
-    {
       id: "rf_st_rsi",
       name: "RF + ST + RSI Divergence",
       subtitle: "Range Filter + SuperTrend + RSI Divergence",
@@ -52,11 +28,28 @@ export default function Dashboard() {
       supported: true,
       defaults: {
         symbol: "BTCUSDT",
-        timeframes: ["1h", "4h", "1D"],
-        st_atrPeriod: [8, 10, 12],
-        st_mult: [1.8, 2.0, 2.2],
-        rf_period: [80, 100, 120],
-        rf_mult: [2.8, 3.0, 3.2],
+        timeframes: ["30m"],
+        // Entry Settings
+        st_atrPeriod: { start: 8, end: 14, step: 2 },
+        st_mult: { start: 1.5, end: 3, step: 0.5 },
+        rf_period: { start: 80, end: 120, step: 20 },
+        rf_mult: { start: 2.5, end: 4, step: 0.5 },
+        rsi_length: { start: 10, end: 18, step: 2 },
+        rsi_ma_length: { start: 4, end: 8, step: 2 },
+        // Stop Loss
+        sl_st_atrPeriod: { start: 10, end: 10, step: 0 },
+        sl_st_mult: { start: 4, end: 4, step: 0 },
+        sl_rf_period: { start: 100, end: 100, step: 0 },
+        sl_rf_mult: { start: 7, end: 7, step: 0 },
+        // Take Profit - Dual Flip
+        tp_dual_st_atrPeriod: { start: 10, end: 10, step: 0 },
+        tp_dual_st_mult: { start: 2, end: 2, step: 0 },
+        tp_dual_rr_mult: { start: 1.3, end: 1.3, step: 0.3 },
+        // Take Profit - RSI
+        tp_rsi_st_atrPeriod: { start: 10, end: 10, step: 0 },
+        tp_rsi_st_mult: { start: 2, end: 2, step: 0 },
+        tp_rsi_rr_mult: { start: 1.3, end: 1.3, step: 0.3 },
+        // Filters
         minTrades: 1,
         minPF: 0.5,
         maxDD: 50,
@@ -65,38 +58,9 @@ export default function Dashboard() {
           baseCurrency: "USDT",
           orderSize: { value: 100, type: "percent" },
           pyramiding: 1,
-          commission: { value: 0.04, type: "percent" },
-          slippage: 0.01,
+          commission: { value: 0, type: "percent" },
+          slippage: 0,
         },
-      },
-    },
-    {
-      id: "smc",
-      name: "SMC Minimal (BOS / OB / FVG)",
-      subtitle: "SOLUSDT · 5m",
-      type: "smc_minimal",
-      supported: false, // chưa nối backend
-      defaults: {
-        symbol: "SOLUSDT",
-        timeframes: ["5m"],
-        bos: true,
-        ob: true,
-        fvg: true,
-        rr: 2,
-      },
-    },
-    {
-      id: "bb",
-      name: "Trend + Momentum + BB Breakout (EMA Exit)",
-      subtitle: "BTCUSDT · 1h",
-      type: "bb_breakout",
-      supported: false,
-      defaults: {
-        symbol: "BTCUSDT",
-        timeframes: ["1h"],
-        bbLength: 20,
-        bbDev: 2,
-        emaExit: 50,
       },
     },
   ];
@@ -132,8 +96,9 @@ export default function Dashboard() {
   const [currentPageOverlay, setCurrentPageOverlay] = useState(1);
   const [currentPageBots, setCurrentPageBots] = useState(1);
   const [jobId, setJobId] = useState(null);
-  const [progress, setProgress] = useState({ percent: 0, status: "idle" });
+  const [progress, setProgress] = useState({ percent: 0, completed: 0, total: 0, status: "idle" });
   const [canceling, setCanceling] = useState(false);
+  const [useQuantBrain, setUseQuantBrain] = useState(false); // Toggle between AI Agent and Quant Brain
 
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [selectedTradeIndex, setSelectedTradeIndex] = useState(null);
@@ -218,13 +183,17 @@ export default function Dashboard() {
   };
 
   const buildArray = (start, end, step) => {
+    // If step is 0 or invalid, return single value
+    if (!step || step <= 0) {
+      return [start];
+    }
     const arr = [];
     for (let v = start; v <= end; v += step) arr.push(v);
     return arr;
   };
 
   const handleRun = async () => {
-    if (!currentStrategy?.supported || !["ema_cross", "rf_st_rsi"].includes(currentStrategy?.type)) {
+    if (!currentStrategy?.supported || currentStrategy?.type !== "rf_st_rsi") {
       setError("Strategy này chưa được backend hỗ trợ trên UI hiện tại.");
       return;
     }
@@ -245,20 +214,7 @@ export default function Dashboard() {
 
     let params = {};
 
-    if (currentStrategy.type === "ema_cross") {
-      params = {
-        emaFast: buildArray(
-          Number(currentInputs.emaFastRange?.start),
-          Number(currentInputs.emaFastRange?.end),
-          Number(currentInputs.emaFastRange?.step)
-        ),
-        emaSlow: buildArray(
-          Number(currentInputs.emaSlowRange?.start),
-          Number(currentInputs.emaSlowRange?.end),
-          Number(currentInputs.emaSlowRange?.step)
-        ),
-      };
-    } else if (currentStrategy.type === "rf_st_rsi") {
+    if (currentStrategy.type === "rf_st_rsi") {
       // Helper to convert range input {start, end, step} to array
       const rangeToArray = (input, defaults) => {
         if (Array.isArray(input)) return input;
@@ -333,10 +289,13 @@ export default function Dashboard() {
   };
 
     try {
-      const startResp = await startAiAgent(cfg);
+      // Choose between AI Agent and Quant Brain
+      const startResp = useQuantBrain
+        ? await startQuantBrain(cfg)
+        : await startAiAgent(cfg);
       const jid = startResp.jobId;
       setJobId(jid);
-      setProgress({ percent: 0, status: "running" });
+      setProgress({ percent: 0, completed: 0, total: 0, status: "running" });
 
       // Close any existing EventSource
       if (eventSourceRef.current) {
@@ -354,8 +313,14 @@ export default function Dashboard() {
           }
           lastProgressUpdateRef.current = now;
 
+          console.log("[SSE Progress]", prog);
           const percent = prog.total ? Math.min(100, Math.round((prog.progress / prog.total) * 100)) : 0;
-          setProgress({ percent, status: prog.status || "running" });
+          setProgress({
+            percent,
+            completed: prog.progress || 0,
+            total: prog.total || 0,
+            status: prog.status || "running"
+          });
         },
         onDone: async (prog) => {
           eventSourceRef.current = null;
@@ -382,7 +347,7 @@ export default function Dashboard() {
                 vis[r.strategyId] = true;
               });
               setVisibleSeries(vis);
-              setProgress({ percent: 100, status: "done" });
+              setProgress({ percent: 100, completed: progress.total, total: progress.total, status: "done" });
             } catch (err) {
               setError(err.message || "Failed to fetch result");
             }
@@ -420,7 +385,7 @@ export default function Dashboard() {
 
     try {
       await cancelAiAgent(jobId);
-      setProgress({ percent: progress.percent, status: "canceled" });
+      setProgress({ ...progress, status: "canceled" });
       setLoading(false);
       setJobId(null);
     } catch (e) {
@@ -430,7 +395,7 @@ export default function Dashboard() {
     } finally {
       setCanceling(false);
     }
-  }, [jobId, progress.percent]);
+  }, [jobId, progress]);
 
   // Cleanup EventSource on unmount
   useEffect(() => {
@@ -1298,17 +1263,37 @@ export default function Dashboard() {
             </div>
 
             <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 14, flexWrap: "wrap" }}>
+              {/* Quant Brain Toggle */}
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={useQuantBrain}
+                  onChange={(e) => setUseQuantBrain(e.target.checked)}
+                  style={{ cursor: "pointer" }}
+                />
+                <span style={{ color: useQuantBrain ? "#10b981" : "#6b7280" }}>
+                  Quant Brain
+                </span>
+                {useQuantBrain && (
+                  <span style={{ fontSize: 10, color: "#10b981", marginLeft: 4 }}>
+                    (Self-learning)
+                  </span>
+                )}
+              </label>
+
               <button
                 onClick={handleRun}
                 disabled={loading || !currentStrategy?.supported || rangeInvalid}
-                style={{ ...primaryBtn, opacity: !currentStrategy?.supported ? 0.6 : 1 }}
+                style={{ ...primaryBtn, opacity: !currentStrategy?.supported ? 0.6 : 1, background: useQuantBrain ? "#10b981" : undefined }}
               >
-                {loading ? "Đang chạy..." : "Chạy AI Agent"}
+                {loading ? "Đang chạy..." : useQuantBrain ? "Chạy Quant Brain" : "Chạy AI Agent"}
               </button>
               {loading && (
                 <div style={{ minWidth: 180, display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ fontSize: 12, opacity: 0.8, minWidth: 80 }}>
-                    {progress.status === "running" ? `Running... ${progress.percent}%` : progress.status}
+                  <div style={{ fontSize: 12, opacity: 0.8, minWidth: 120 }}>
+                    {progress.status === "running"
+                      ? `Running... ${progress.completed}/${progress.total} (${progress.percent}%)`
+                      : progress.status}
                   </div>
                   <div style={{ flex: 1, height: 6, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
                     <div

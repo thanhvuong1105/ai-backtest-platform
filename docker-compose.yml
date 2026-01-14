@@ -69,19 +69,32 @@ services:
       args:
         - BUILDKIT_INLINE_CACHE=1
     container_name: backtest-celery
-    command: celery -A app.services.celery_app.celery worker --loglevel=info -Q default --concurrency=${CELERY_CONCURRENCY:-2}
+    command: celery -A app.services.celery_app.celery worker --loglevel=info -Q default --concurrency=${CELERY_CONCURRENCY:-8}
     environment:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - JOB_TIMEOUT_SEC=1800
+      - JOB_TIMEOUT_SEC=3600
       - MAX_STDOUT_SIZE=20971520
-      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-8}
       - PROJECT_ROOT=/app
       - PYTHONUNBUFFERED=1
       # Celery worker optimization
-      - CELERY_WORKER_PREFETCH_MULTIPLIER=1
+      - CELERY_WORKER_PREFETCH_MULTIPLIER=4
       - CELERY_TASK_ACKS_LATE=true
+      # Performance tuning - optimized settings
+      - MAX_PARALLEL_RUNS=1000
+      - INDICATOR_CACHE_SIZE=512
+      - DATA_PRELOAD=true
+      - PROGRESS_BATCH_SIZE=50
+      - MAX_THREAD_WORKERS=16
+      - REDIS_POOL_SIZE=20
+      - DATA_CACHE_SIZE=128
+      - INDICATOR_RESULT_CACHE_SIZE=256
+      # Numba optimization
+      - USE_FAST_STRATEGY=true
+      - NUMBA_CACHE_DIR=/tmp/numba_cache
+      - NUMBA_NUM_THREADS=4
     volumes:
       # Mount data folder for market data CSVs
       - ./engine/data:/app/engine/data:ro
@@ -92,11 +105,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
-          cpus: '2'
+          memory: 8G
+          cpus: '4'
         reservations:
-          memory: 1G
-          cpus: '0.5'
+          memory: 2G
+          cpus: '1'
 
   # Frontend - React app served by nginx
   frontend:

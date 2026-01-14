@@ -224,13 +224,12 @@ def ai_recommend_fast(cfg: Dict[str, Any]) -> Dict[str, Any]:
     # Sort by score
     results.sort(key=lambda x: x["summary"].get("score", 0), reverse=True)
 
-    # Apply filters & stability
+    # Apply filters & stability (only PnL filter)
     filters = cfg.get("filters", {})
     passed = filter_results(
         results,
-        min_pf=filters.get("minPF", 1.0),
-        min_trades=filters.get("minTrades", 30),
-        max_dd=filters.get("maxDD", 40)
+        min_pnl=filters.get("minPnL", 0),
+        min_trades=filters.get("minTrades", 10)
     )
     min_tf = cfg.get("minTFAgree", 2)
     passed = apply_tf_agreement(passed, min_tf=min_tf)

@@ -28,3 +28,6 @@ pytest-asyncio>=0.24.0
 # Engine dependencies (also needed for subprocess)
 pandas>=2.2.0
 numpy>=1.26.0
+
+# Performance optimization
+numba>=0.60.0

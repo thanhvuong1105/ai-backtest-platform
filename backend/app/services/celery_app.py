@@ -59,6 +59,7 @@ celery.conf.task_routes = {
     "app.services.tasks.run_backtest_task": {"queue": "default"},
     "app.services.tasks.optimize_task": {"queue": "default"},
     "app.services.tasks.ai_agent_task": {"queue": "default"},
+    "app.services.tasks.quant_brain_task": {"queue": "default"},
     "app.services.tasks.chart_data_task": {"queue": "default"},
 }
 

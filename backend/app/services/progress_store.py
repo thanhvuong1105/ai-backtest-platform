@@ -6,12 +6,15 @@ Provides helpers to:
 - Store/retrieve job results
 - Publish progress updates via Redis pub/sub
 - Check cancel flags
+
+Uses connection pooling for better performance under load.
 """
 
 import os
 import json
 from typing import Optional, Dict, Any
 import redis
+from redis import ConnectionPool
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,15 +22,32 @@ load_dotenv()
 # Redis connection
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-# Create Redis client - lazy initialization
+# Connection pool settings
+# Pool size = 2 * worker_count for optimal performance
+POOL_MAX_CONNECTIONS = int(os.getenv("REDIS_POOL_SIZE", 20))
+
+# Create connection pool - shared across all Redis clients
+_connection_pool: Optional[ConnectionPool] = None
 _redis_client: Optional[redis.Redis] = None
 
 
+def get_connection_pool() -> ConnectionPool:
+    """Get or create Redis connection pool."""
+    global _connection_pool
+    if _connection_pool is None:
+        _connection_pool = ConnectionPool.from_url(
+            REDIS_URL,
+            max_connections=POOL_MAX_CONNECTIONS,
+            decode_responses=True
+        )
+    return _connection_pool
+
+
 def get_redis() -> redis.Redis:
-    """Get Redis client with lazy initialization"""
+    """Get Redis client with connection pooling."""
     global _redis_client
     if _redis_client is None:
-        _redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+        _redis_client = redis.Redis(connection_pool=get_connection_pool())
     return _redis_client
 
 

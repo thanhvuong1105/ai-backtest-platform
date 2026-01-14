@@ -25,7 +25,8 @@ from sse_starlette.sse import EventSourceResponse
 from app.services.tasks import (
     run_backtest_task,
     optimize_task,
-    ai_agent_task
+    ai_agent_task,
+    quant_brain_task
 )
 from app.services.progress_store import (
     get_progress,
@@ -71,7 +72,7 @@ class DateRange(BaseModel):
 
 
 class OptimizeRequest(BaseModel):
-    """Request body for /optimize and /ai-agent"""
+    """Request body for /optimize, /ai-agent, /quant-brain"""
     symbols: List[str]
     timeframes: List[str]
     strategy: StrategyConfig
@@ -81,6 +82,8 @@ class OptimizeRequest(BaseModel):
     topN: Optional[int] = 50
     minTFAgree: Optional[int] = 2
     stability: Optional[Dict[str, float]] = None
+    # Quant Brain mode: "ultra", "fast", or "brain"
+    mode: Optional[str] = "fast"
 
 
 class JobResponse(BaseModel):
@@ -383,3 +386,49 @@ async def cancel_job(job_id: str):
             pass  # Ignore revoke errors - cancel flag will handle it
 
     return {"success": True}
+
+
+@router.post("/quant-brain")
+async def quant_brain(request: OptimizeRequest):
+    """
+    Run Quant AI Brain - Self-learning optimization engine.
+
+    Features:
+    - Long-term genome memory (ParamMemory)
+    - Market regime classification
+    - Evolutionary genome optimization
+    - Coherence validation
+    - Robustness filtering
+
+    Request body: OptimizeRequest with symbols, timeframes, strategy, etc.
+
+    Returns:
+    - { jobId: "..." }
+    """
+    cfg = request.model_dump(by_alias=True)
+
+    # Log the request for debugging
+    import logging
+    logger = logging.getLogger(__name__)
+    strategy_type = cfg.get("strategy", {}).get("type", "unknown")
+    symbols = cfg.get("symbols", [])
+    timeframes = cfg.get("timeframes", [])
+    logger.info(f"[Quant-Brain] Received request: strategy={strategy_type}, symbols={symbols}, timeframes={timeframes}")
+
+    error = validate_optimize_config(cfg)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+
+    job_id = generate_job_id()
+
+    # Initialize progress
+    set_progress(job_id, {"progress": 0, "total": 100, "status": "running", "phase": "initializing"})
+
+    # Enqueue task
+    result = quant_brain_task.delay(cfg, job_id)
+    # Store task_id mapping for proper revoke support
+    set_task_id(job_id, result.id)
+
+    logger.info(f"[Quant-Brain] Enqueued job {job_id} (task_id={result.id}) for strategy={strategy_type}")
+
+    return {"jobId": job_id}

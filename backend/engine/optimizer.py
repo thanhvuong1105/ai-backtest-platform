@@ -65,9 +65,8 @@ def optimize(
     filters = cfg.get("filters", {})
     passed = filter_results(
         all_results,
-        min_pf=filters.get("minPF", 1.0),
-        min_trades=filters.get("minTrades", 30),
-        max_dd=filters.get("maxDD", 40)
+        min_pnl=filters.get("minPnL", 0),
+        min_trades=filters.get("minTrades", 10)
     )
 
     # =========================
