@@ -71,10 +71,7 @@ from .strategy_hash import generate_strategy_hash, ENGINE_VERSION
 from .coherence_validator import validate_genome, repair_genome
 
 # Import existing backtest engine
-try:
-    from .backtest import run_backtest
-except ImportError:
-    from .strategies.rf_st_rsi import backtest_rf_st_rsi as run_backtest
+from .backtest_engine import run_backtest
 
 logger = logging.getLogger(__name__)
 
