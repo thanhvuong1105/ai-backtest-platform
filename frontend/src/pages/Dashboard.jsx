@@ -99,7 +99,7 @@ export default function Dashboard() {
   const [jobId, setJobId] = useState(null);
   const [progress, setProgress] = useState({ percent: 0, completed: 0, total: 0, status: "idle" });
   const [canceling, setCanceling] = useState(false);
-  const [useQuantBrain, setUseQuantBrain] = useState(false); // Toggle between AI Agent and Quant Brain
+  const [useQuantBrain, setUseQuantBrain] = useState(true); // Always use Quant Brain (AI Agent deprecated)
 
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [selectedTradeIndex, setSelectedTradeIndex] = useState(null);
