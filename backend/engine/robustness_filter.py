@@ -120,11 +120,11 @@ def perturb_atr_periods(genome: Dict, delta: int) -> Dict:
 
     # Entry ATR period
     if "entry" in perturbed and "st_atrPeriod" in perturbed["entry"]:
-        perturbed["entry"]["st_atrPeriod"] = max(5, perturbed["entry"]["st_atrPeriod"] + delta)
+        perturbed["entry"]["st_atrPeriod"] = max(1, perturbed["entry"]["st_atrPeriod"] + delta)
 
     # SL ATR period
     if "sl" in perturbed and "st_atrPeriod" in perturbed["sl"]:
-        perturbed["sl"]["st_atrPeriod"] = max(5, perturbed["sl"]["st_atrPeriod"] + delta)
+        perturbed["sl"]["st_atrPeriod"] = max(1, perturbed["sl"]["st_atrPeriod"] + delta)
 
     return perturbed
 

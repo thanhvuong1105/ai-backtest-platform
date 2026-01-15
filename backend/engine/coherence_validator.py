@@ -220,7 +220,7 @@ def repair_and_validate(genome: Dict[str, Any]) -> Tuple[bool, Dict[str, Any], L
 # Valid ranges for each parameter
 PARAM_BOUNDS = {
     "entry": {
-        "st_atrPeriod": (5, 30),
+        "st_atrPeriod": (1, 20),
         "st_mult": (0.5, 5.0),
         "rf_period": (30, 200),
         "rf_mult": (1.0, 10.0),
@@ -228,18 +228,18 @@ PARAM_BOUNDS = {
         "rsi_ma_length": (2, 20),
     },
     "sl": {
-        "st_atrPeriod": (5, 30),
+        "st_atrPeriod": (1, 20),
         "st_mult": (2.0, 10.0),
         "rf_period": (30, 200),
         "rf_mult": (3.0, 15.0),
     },
     "tp_dual": {
-        "st_atrPeriod": (5, 30),
+        "st_atrPeriod": (1, 20),
         "st_mult": (0.5, 5.0),
         "rr_mult": (0.5, 5.0),
     },
     "tp_rsi": {
-        "st_atrPeriod": (5, 30),
+        "st_atrPeriod": (1, 20),
         "st_mult": (0.5, 5.0),
         "rr_mult": (0.5, 5.0),
     },
