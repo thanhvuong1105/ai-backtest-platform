@@ -201,6 +201,62 @@ def get_top_genomes_by_score(
         return []
 
 
+def get_genomes_by_scan(
+    strategy_hash: str,
+    symbol: str,
+    timeframe: str,
+    limit: int = 50
+) -> List[Dict[str, Any]]:
+    """
+    Get genomes by scanning keys directly (fallback when sorted set is empty).
+
+    Args:
+        strategy_hash: Strategy hash
+        symbol: Trading symbol
+        timeframe: Timeframe
+        limit: Maximum number of genomes to return
+
+    Returns:
+        List of genome records sorted by score (descending)
+    """
+    try:
+        r = get_redis()
+        pattern = f"{GENOME_KEY_PREFIX}{strategy_hash}:{symbol}:{timeframe}:*"
+
+        # Scan for matching keys
+        results = []
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor, match=pattern, count=100)
+            for key in keys:
+                data = r.get(key)
+                if data:
+                    try:
+                        record = json.loads(data)
+                        results.append(record)
+                    except json.JSONDecodeError:
+                        pass
+
+            if cursor == 0:
+                break
+
+            # Stop if we have enough
+            if len(results) >= limit * 2:
+                break
+
+        # Sort by score descending
+        results.sort(
+            key=lambda x: x.get("results", {}).get("score", 0),
+            reverse=True
+        )
+
+        return results[:limit]
+
+    except Exception as e:
+        logger.error(f"Failed to scan genomes: {e}")
+        return []
+
+
 def get_all_top_genomes(
     strategy_hash: str,
     symbols: List[str],

@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 
-router = APIRouter()
+router = APIRouter(prefix="/api", tags=["parse-pine"])
 
 
 class ParsePineRequest(BaseModel):

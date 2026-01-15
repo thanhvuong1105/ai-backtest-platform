@@ -16,6 +16,7 @@ from app.api.health import router as health_router
 from app.api.parse_pine import router as parse_pine_router
 from app.api.jobs import router as jobs_router
 from app.api.chart import router as chart_router
+from app.api.memory import router as memory_router
 
 # Load environment variables
 load_dotenv()
@@ -54,6 +55,7 @@ app.include_router(health_router)
 app.include_router(parse_pine_router)
 app.include_router(jobs_router)
 app.include_router(chart_router)
+app.include_router(memory_router)
 
 
 if __name__ == "__main__":

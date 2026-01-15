@@ -39,7 +39,7 @@ from app.services.progress_store import (
 )
 from app.services.celery_app import celery
 
-router = APIRouter()
+router = APIRouter(prefix="/api", tags=["jobs"])
 
 
 # ==================== Request/Response Models ====================

@@ -273,6 +273,109 @@ def clamp_to_bounds(genome: Dict[str, Any]) -> Dict[str, Any]:
     return clamped
 
 
+# ═══════════════════════════════════════════════════════
+# CUSTOM PARAM BOUNDS FROM DASHBOARD
+# ═══════════════════════════════════════════════════════
+
+def extract_param_bounds_from_config(cfg: Dict[str, Any]) -> Dict[str, Dict[str, Tuple[float, float]]]:
+    """
+    Extract parameter bounds from Dashboard config.
+
+    Dashboard format:
+    {
+        "st_atrPeriod": {"start": 8, "end": 14, "step": 2},
+        "sl_st_atrPeriod": {"start": 10, "end": 10, "step": 0},
+        ...
+    }
+
+    Returns bounds dict:
+    {
+        "entry": {
+            "st_atrPeriod": (8, 14),
+            "st_mult": (1.5, 3.0),
+            ...
+        },
+        "sl": {
+            "st_atrPeriod": (10, 10),
+            ...
+        },
+        ...
+    }
+
+    Args:
+        cfg: Dashboard config with parameter ranges
+
+    Returns:
+        Bounds dict compatible with genome_optimizer
+    """
+    bounds = {
+        "entry": {},
+        "sl": {},
+        "tp_dual": {},
+        "tp_rsi": {},
+    }
+
+    # Mapping: Dashboard param name → (block, genome param name)
+    param_mapping = {
+        # Entry
+        "st_atrPeriod": ("entry", "st_atrPeriod"),
+        "st_mult": ("entry", "st_mult"),
+        "rf_period": ("entry", "rf_period"),
+        "rf_mult": ("entry", "rf_mult"),
+        "rsi_length": ("entry", "rsi_length"),
+        "rsi_ma_length": ("entry", "rsi_ma_length"),
+
+        # Stop Loss
+        "sl_st_atrPeriod": ("sl", "st_atrPeriod"),
+        "sl_st_mult": ("sl", "st_mult"),
+        "sl_rf_period": ("sl", "rf_period"),
+        "sl_rf_mult": ("sl", "rf_mult"),
+
+        # TP Dual Flip
+        "tp_dual_st_atrPeriod": ("tp_dual", "st_atrPeriod"),
+        "tp_dual_st_mult": ("tp_dual", "st_mult"),
+        "tp_dual_rr_mult": ("tp_dual", "rr_mult"),
+
+        # TP RSI
+        "tp_rsi_st_atrPeriod": ("tp_rsi", "st_atrPeriod"),
+        "tp_rsi_st_mult": ("tp_rsi", "st_mult"),
+        "tp_rsi_rr_mult": ("tp_rsi", "rr_mult"),
+    }
+
+    # Extract bounds from config (check both cfg.paramBounds and top-level cfg)
+    param_bounds_source = cfg.get("paramBounds", cfg)  # Try paramBounds first, fallback to cfg
+
+    for dashboard_param, (block, genome_param) in param_mapping.items():
+        if dashboard_param in param_bounds_source and isinstance(param_bounds_source[dashboard_param], dict):
+            param_config = param_bounds_source[dashboard_param]
+            start = param_config.get("start")
+            end = param_config.get("end")
+
+            if start is not None and end is not None:
+                # Use min/max to handle reversed ranges
+                min_val = min(float(start), float(end))
+                max_val = max(float(start), float(end))
+
+                # Expand bounds slightly to allow mutation beyond range
+                range_size = max_val - min_val
+                expansion = max(range_size * 0.2, 1.0)  # 20% expansion or minimum 1.0
+
+                min_val = max(0.5, min_val - expansion)  # Don't go below 0.5
+                max_val = max_val + expansion
+
+                bounds[block][genome_param] = (min_val, max_val)
+
+    # Merge with default bounds for missing params
+    for block in bounds:
+        if block in PARAM_BOUNDS:
+            for param, default_bound in PARAM_BOUNDS[block].items():
+                if param not in bounds[block]:
+                    bounds[block][param] = default_bound
+
+    logger.info(f"Extracted custom param bounds from config: {bounds}")
+    return bounds
+
+
 def get_param_bounds() -> Dict[str, Any]:
     """Get parameter bounds for UI/documentation."""
     return PARAM_BOUNDS

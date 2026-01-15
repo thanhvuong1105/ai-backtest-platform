@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { startAiAgent, startQuantBrain, getAiAgentResult, cancelAiAgent, createProgressStream } from "../api/optimizer";
+import MemoryPanel from "../components/MemoryPanel";
 
 import Header from "../components/Header";
 import StrategyTable from "../components/StrategyTable";
@@ -30,25 +31,25 @@ export default function Dashboard() {
         symbol: "BTCUSDT",
         timeframes: ["30m"],
         // Entry Settings
-        st_atrPeriod: { start: 8, end: 14, step: 2 },
-        st_mult: { start: 1.5, end: 3, step: 0.5 },
-        rf_period: { start: 80, end: 120, step: 20 },
-        rf_mult: { start: 2.5, end: 4, step: 0.5 },
-        rsi_length: { start: 10, end: 18, step: 2 },
-        rsi_ma_length: { start: 4, end: 8, step: 2 },
+        st_atrPeriod: { start: 1, end: 100, step: 2 },
+        st_mult: { start: 2, end: 30, step: 0.5 },
+        rf_period: { start: 1, end: 100, step: 20 },
+        rf_mult: { start: 1, end: 30, step: 0.5 },
+        rsi_length: { start: 1, end: 20, step: 2 },
+        rsi_ma_length: { start: 1, end: 15, step: 2 },
         // Stop Loss
-        sl_st_atrPeriod: { start: 10, end: 10, step: 0 },
-        sl_st_mult: { start: 4, end: 4, step: 0 },
-        sl_rf_period: { start: 100, end: 100, step: 0 },
-        sl_rf_mult: { start: 7, end: 7, step: 0 },
+        sl_st_atrPeriod: { start: 1, end: 100, step: 0 },
+        sl_st_mult: { start: 1, end: 30, step: 0 },
+        sl_rf_period: { start: 1, end: 100, step: 0 },
+        sl_rf_mult: { start: 1, end: 30, step: 0 },
         // Take Profit - Dual Flip
-        tp_dual_st_atrPeriod: { start: 10, end: 10, step: 0 },
-        tp_dual_st_mult: { start: 2, end: 2, step: 0 },
-        tp_dual_rr_mult: { start: 1.3, end: 1.3, step: 0.3 },
+        tp_dual_st_atrPeriod: { start: 1, end: 100, step: 0 },
+        tp_dual_st_mult: { start: 1, end: 30, step: 0 },
+        tp_dual_rr_mult: { start: 0.1, end: 5, step: 0.3 },
         // Take Profit - RSI
-        tp_rsi_st_atrPeriod: { start: 10, end: 10, step: 0 },
-        tp_rsi_st_mult: { start: 2, end: 2, step: 0 },
-        tp_rsi_rr_mult: { start: 1.3, end: 1.3, step: 0.3 },
+        tp_rsi_st_atrPeriod: { start: 1, end: 100, step: 0 },
+        tp_rsi_st_mult: { start: 1, end: 30, step: 0 },
+        tp_rsi_rr_mult: { start: 0.1, end: 5, step: 0.3 },
         // Filters
         minTrades: 1,
         minPF: 0.5,
@@ -270,6 +271,29 @@ export default function Dashboard() {
       };
     }
 
+    // Build paramBounds for Quant Brain (raw range objects)
+    let paramBounds = {};
+    if (currentStrategy.type === "rf_st_rsi") {
+      paramBounds = {
+        st_atrPeriod: currentInputs.st_atrPeriod,
+        st_mult: currentInputs.st_mult,
+        rf_period: currentInputs.rf_period,
+        rf_mult: currentInputs.rf_mult,
+        rsi_length: currentInputs.rsi_length,
+        rsi_ma_length: currentInputs.rsi_ma_length,
+        sl_st_atrPeriod: currentInputs.sl_st_atrPeriod,
+        sl_st_mult: currentInputs.sl_st_mult,
+        sl_rf_period: currentInputs.sl_rf_period,
+        sl_rf_mult: currentInputs.sl_rf_mult,
+        tp_dual_st_atrPeriod: currentInputs.tp_dual_st_atrPeriod,
+        tp_dual_st_mult: currentInputs.tp_dual_st_mult,
+        tp_dual_rr_mult: currentInputs.tp_dual_rr_mult,
+        tp_rsi_st_atrPeriod: currentInputs.tp_rsi_st_atrPeriod,
+        tp_rsi_st_mult: currentInputs.tp_rsi_st_mult,
+        tp_rsi_rr_mult: currentInputs.tp_rsi_rr_mult,
+      };
+    }
+
     const cfg = {
       symbols: [currentInputs.symbol],
       timeframes: tfNormalized,
@@ -277,6 +301,7 @@ export default function Dashboard() {
         type: currentStrategy.type,
         params,
       },
+      paramBounds,  // Send raw bounds for Quant Brain
       filters: {
         minPF: Number(currentInputs.minPF),
       minTrades: Number(currentInputs.minTrades),
@@ -744,40 +769,48 @@ export default function Dashboard() {
             alignItems: "stretch",
           }}
         >
-          {/* ================= LEFT: STRATEGY LIST ================= */}
-          <div style={panel}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h2 style={{ margin: 0, fontSize: 16, letterSpacing: 0.3 }}>Strategy</h2>
-              <button style={{ ...legendChip, padding: "6px 10px" }}>+ New</button>
+          {/* ================= LEFT: STRATEGY LIST + MEMORY ================= */}
+          <div>
+            <div style={panel}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h2 style={{ margin: 0, fontSize: 16, letterSpacing: 0.3 }}>Strategy</h2>
+                <button style={{ ...legendChip, padding: "6px 10px" }}>+ New</button>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+                {strategyConfigs.map((s) => {
+                  const active = s.id === selectedStrategyId;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => setSelectedStrategyId(s.id)}
+                      style={{
+                        textAlign: "left",
+                        padding: "10px 12px",
+                        borderRadius: 14,
+                        border: active ? "1px solid rgba(34,197,94,0.6)" : "1px solid rgba(255,255,255,0.08)",
+                        background: active
+                          ? "linear-gradient(180deg, rgba(34,197,94,0.15), rgba(34,197,94,0.05))"
+                          : "rgba(255,255,255,0.03)",
+                        color: "#e5e7eb",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <div style={{ fontWeight: 700 }}>{s.name}</div>
+                      <div style={{ fontSize: 12, opacity: 0.75 }}>{s.subtitle}</div>
+                      {!s.supported && (
+                        <div style={{ marginTop: 6, fontSize: 11, color: "#f59e0b" }}>Chưa hỗ trợ backend</div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-              {strategyConfigs.map((s) => {
-                const active = s.id === selectedStrategyId;
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => setSelectedStrategyId(s.id)}
-                    style={{
-                      textAlign: "left",
-                      padding: "10px 12px",
-                      borderRadius: 14,
-                      border: active ? "1px solid rgba(34,197,94,0.6)" : "1px solid rgba(255,255,255,0.08)",
-                      background: active
-                        ? "linear-gradient(180deg, rgba(34,197,94,0.15), rgba(34,197,94,0.05))"
-                        : "rgba(255,255,255,0.03)",
-                      color: "#e5e7eb",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div style={{ fontWeight: 700 }}>{s.name}</div>
-                    <div style={{ fontSize: 12, opacity: 0.75 }}>{s.subtitle}</div>
-                    {!s.supported && (
-                      <div style={{ marginTop: 6, fontSize: 11, color: "#f59e0b" }}>Chưa hỗ trợ backend</div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+
+            {/* Memory Panel - shows stored genomes */}
+            <MemoryPanel
+              symbol={currentInputs.symbol || "BTCUSDT"}
+              timeframe={(currentInputs.timeframes || ["30m"])[0]}
+            />
           </div>
 
           {/* ================= INPUT FULL WIDTH (remaining) ================= */}

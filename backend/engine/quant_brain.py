@@ -44,9 +44,8 @@ from .coherence_validator import (
     validate_genome_batch,
     repair_genome,
     clamp_to_bounds,
-    get_effective_bounds,
-    expand_bounds_from_memory,
-    PARAM_BOUNDS
+    PARAM_BOUNDS,
+    extract_param_bounds_from_config
 )
 from .regime_classifier import (
     MarketRegime,
@@ -118,6 +117,110 @@ DATA_PRELOAD = os.getenv("DATA_PRELOAD", "true").lower() == "true"
 # Scoring constants
 DOWNSAMPLE_EQUITY_POINTS = 400
 MAX_TRADES_RETURN = 1200
+
+
+# ═══════════════════════════════════════════════════════
+# PARAM BOUNDS HELPER
+# ═══════════════════════════════════════════════════════
+
+def get_effective_bounds(cfg: Dict[str, Any], memory_records: List[Dict] = None) -> Dict:
+    """
+    Get effective parameter bounds by merging:
+    1. User-specified bounds from Dashboard config
+    2. Auto-expanded bounds from memory (successful genomes)
+    3. Default bounds from PARAM_BOUNDS
+
+    Priority: User config > Memory expansion > Default
+
+    Args:
+        cfg: Dashboard config with parameter ranges
+        memory_records: List of genome records from ParamMemory
+
+    Returns:
+        Merged bounds dict
+    """
+    # Start with user-specified bounds from config
+    user_bounds = extract_param_bounds_from_config(cfg)
+
+    # If no memory records, return user bounds
+    if not memory_records:
+        logger.info("Using user-specified bounds (no memory records)")
+        return user_bounds
+
+    # Auto-expand bounds based on successful genomes from memory
+    expanded_bounds = expand_bounds_from_memory(user_bounds, memory_records)
+
+    logger.info(f"Effective bounds computed from config + {len(memory_records)} memory records")
+    return expanded_bounds
+
+
+def expand_bounds_from_memory(
+    base_bounds: Dict,
+    memory_records: List[Dict],
+    expansion_threshold: float = 0.2
+) -> Dict:
+    """
+    Expand parameter bounds based on successful genomes from memory.
+
+    If memory contains high-scoring genomes with parameters outside user range,
+    expand bounds to include them (with some margin).
+
+    Args:
+        base_bounds: Base bounds (from user config or defaults)
+        memory_records: Genome records with scores
+        expansion_threshold: Only expand for genomes in top 20% by score
+
+    Returns:
+        Expanded bounds dict
+    """
+    if not memory_records:
+        return base_bounds
+
+    # Filter to high-scoring genomes only
+    scores = [r.get("results", {}).get("score", 0) for r in memory_records]
+    if not scores:
+        return base_bounds
+
+    score_threshold = sorted(scores, reverse=True)[int(len(scores) * expansion_threshold)]
+    high_performers = [r for r in memory_records
+                      if r.get("results", {}).get("score", 0) >= score_threshold]
+
+    if not high_performers:
+        return base_bounds
+
+    expanded = copy.deepcopy(base_bounds)
+
+    # Track min/max values from high-performing genomes
+    for record in high_performers:
+        genome = record.get("genome", {})
+
+        for block in ["entry", "sl", "tp_dual", "tp_rsi"]:
+            if block not in genome or block not in expanded:
+                continue
+
+            for param, value in genome[block].items():
+                if not isinstance(value, (int, float)):
+                    continue
+
+                if param not in expanded[block]:
+                    continue
+
+                current_min, current_max = expanded[block][param]
+
+                # Expand if genome value is near or outside bounds
+                margin = (current_max - current_min) * 0.1  # 10% margin
+
+                if value < current_min:
+                    new_min = max(0.5, value - margin)  # Don't go below 0.5
+                    expanded[block][param] = (new_min, current_max)
+                    logger.info(f"Expanded {block}.{param} min: {current_min} → {new_min}")
+
+                if value > current_max:
+                    new_max = value + margin
+                    expanded[block][param] = (current_min, new_max)
+                    logger.info(f"Expanded {block}.{param} max: {current_max} → {new_max}")
+
+    return expanded
 
 
 # ═══════════════════════════════════════════════════════
@@ -615,20 +718,22 @@ def quant_brain_recommend(
         top_genome_limit = 10  # Return only top 10 genomes
         logger.info(f"ULTRA mode: Apple Silicon optimized - pop={population_size}, top={top_genome_limit}")
     elif num_combos <= 1:
-        # Single combo: high quality but faster
-        generations_per_phase = 4
-        population_size = 25
-        top_genome_limit = 15
+        # Single combo: DEEP SEARCH (reduced from 10 to 5 generations)
+        # Balanced quality: 100 genomes × 5 generations = 500 tests per phase
+        generations_per_phase = 5  # Faster convergence
+        population_size = 100  # Large population for diverse exploration
+        top_genome_limit = 20  # Return top 20 genomes
+        logger.info(f"BRAIN mode: Deep search - pop={population_size}, gen={generations_per_phase}")
     elif num_combos <= 3:
-        # 2-3 combos: balanced
-        generations_per_phase = 3
-        population_size = 20
-        top_genome_limit = 10
+        # 2-3 combos: balanced quality
+        generations_per_phase = 4
+        population_size = 50  # Medium population
+        top_genome_limit = 15
     else:
-        # 4+ combos: speed priority
-        generations_per_phase = 2
-        population_size = 15
-        top_genome_limit = 8
+        # 4+ combos: speed priority (keep original)
+        generations_per_phase = 3
+        population_size = 30
+        top_genome_limit = 10
 
     logger.info(
         f"Adaptive params: {num_combos} combos → "
@@ -803,6 +908,7 @@ def quant_brain_recommend(
                 genome = result.get("genome", {})
                 genome_hash = generate_genome_hash(genome)
 
+                summary = result.get("summary", {})
                 record = {
                     "strategy_hash": strategy_hash,
                     "symbol": result.get("symbol"),
@@ -811,13 +917,15 @@ def quant_brain_recommend(
                     "market_profile": market_profile,
                     "genome": genome,
                     "results": {
-                        "pf": result.get("summary", {}).get("profitFactor", 0),
-                        "winrate": result.get("summary", {}).get("winrate", 0),
-                        "max_dd": result.get("summary", {}).get("maxDrawdownPct", 0),
-                        "net_profit": result.get("summary", {}).get("netProfit", 0),
-                        "score": result.get("summary", {}).get("brainScore", 0),
-                        "ulcer_index": result.get("summary", {}).get("ulcerIndex", 0),
-                        "loss_streak": result.get("summary", {}).get("maxLossStreak", 0),
+                        "pf": summary.get("profitFactor", 0),
+                        "winrate": summary.get("winrate", 0),
+                        "max_dd": summary.get("maxDrawdownPct", 0),
+                        "net_profit": summary.get("netProfit", 0),
+                        "net_profit_pct": summary.get("netProfitPct", 0),
+                        "total_trades": summary.get("totalTrades", 0),
+                        "score": summary.get("brainScore", 0),
+                        "ulcer_index": summary.get("ulcerIndex", 0),
+                        "loss_streak": summary.get("maxLossStreak", 0),
                         "robustness_score": result.get("robustness_score", 0),
                     },
                     "timestamp": int(time.time()),

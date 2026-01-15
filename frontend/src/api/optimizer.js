@@ -216,3 +216,53 @@ export function createProgressStream(jobId, callbacks = {}) {
 
   return eventSource;
 }
+
+// ═══════════════════════════════════════════════════════
+// MEMORY API - View stored genomes
+// ═══════════════════════════════════════════════════════
+
+/**
+ * Get memory statistics (total genomes, counts per symbol/timeframe)
+ * @param {string} strategyType - Strategy type (default: "rf_st_rsi")
+ */
+export async function getMemoryStats(strategyType = "rf_st_rsi") {
+  return getJson(`/memory/stats?strategy_type=${strategyType}`);
+}
+
+/**
+ * Get top-performing genomes for a symbol/timeframe
+ * @param {string} symbol - Trading symbol (default: "BTCUSDT")
+ * @param {string} timeframe - Timeframe (default: "30m")
+ * @param {number} limit - Max genomes to return (default: 20)
+ * @param {string} strategyType - Strategy type (default: "rf_st_rsi")
+ */
+export async function getMemoryGenomes(
+  symbol = "BTCUSDT",
+  timeframe = "30m",
+  limit = 20,
+  strategyType = "rf_st_rsi"
+) {
+  const params = new URLSearchParams({
+    symbol,
+    timeframe,
+    limit: limit.toString(),
+    strategy_type: strategyType,
+  });
+  return getJson(`/memory/genomes?${params}`);
+}
+
+/**
+ * Clear all stored genomes for a strategy
+ * WARNING: This is irreversible!
+ * @param {string} strategyType - Strategy type
+ * @param {boolean} confirm - Must be true to actually delete
+ */
+export async function clearMemory(strategyType = "rf_st_rsi", confirm = false) {
+  const params = new URLSearchParams({
+    strategy_type: strategyType,
+    confirm: confirm.toString(),
+  });
+  return fetch(`${API_BASE}/memory/clear?${params}`, { method: "DELETE" }).then(
+    (res) => res.json()
+  );
+}

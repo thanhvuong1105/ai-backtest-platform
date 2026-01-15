@@ -8,8 +8,17 @@ Public API:
 - run_backtest(config, progress_cb=None): Run a single backtest
 - run_optimizer(config, progress_cb=None): Run optimization
 - run_ai_agent(config, progress_cb=None): Run AI agent
+- run_quant_brain(config, progress_cb=None): Run Quant Brain v1
+- run_quant_brain_v2(config, progress_cb=None): Run Quant Brain v2.0
 - generate_chart_data(config): Generate chart data for visualization
 - load_data(symbol, timeframe): Load OHLCV data
+
+Quant Brain v2.0 Components:
+- market_profile_v2: 32 indicators across 6 clusters
+- brain_score: Multi-criteria BrainScore calculation
+- genome_optimizer_v2: Advanced GA with adaptive mutation
+- robustness_testing: Walk-Forward, Monte Carlo, Sensitivity tests
+- param_memory_v2: Enhanced memory with similarity search
 """
 
 from typing import Any, Callable, Dict, Optional
@@ -19,10 +28,19 @@ from .backtest_engine import run_backtest as _run_backtest_core
 from .optimizer import optimize as _optimize_core
 # Use original AI agent (vectorized version disabled for accuracy)
 from .ai_agent import ai_recommend as _ai_recommend_core
-# Quant Brain - Self-learning optimization engine
+# Quant Brain v1 - Self-learning optimization engine
 from .quant_brain import quant_brain_recommend as _quant_brain_core
+# Quant Brain v2.0 - Advanced optimization with robustness testing
+from .quant_brain_v2 import quant_brain_optimize_v2_sync as _quant_brain_v2_core
 from .chart_data import get_chart_data as _get_chart_data_core
 from .data_loader import load_csv
+
+# Import v2 modules for direct access
+from . import market_profile_v2
+from . import brain_score
+from . import genome_optimizer_v2
+from . import robustness_testing
+from . import param_memory_v2
 
 
 def run_backtest(
@@ -123,7 +141,7 @@ def run_quant_brain(
     progress_cb: Optional[Callable[[str, int, int, str, Dict], None]] = None
 ) -> Dict[str, Any]:
     """
-    Run Quant AI Brain - Self-learning optimization engine.
+    Run Quant AI Brain v1 - Self-learning optimization engine.
 
     Features:
     - Long-term genome memory (ParamMemory)
@@ -146,6 +164,47 @@ def run_quant_brain(
             - meta: { total_tested, from_memory, robustness_passed, ... }
     """
     return _quant_brain_core(config, job_id=job_id, progress_cb=progress_cb)
+
+
+def run_quant_brain_v2(
+    config: Dict[str, Any],
+    job_id: str = "",
+    progress_cb: Optional[Callable[[str, int, int, str, Dict], None]] = None,
+    skip_robustness: bool = False
+) -> Dict[str, Any]:
+    """
+    Run Quant AI Brain v2.0 - Advanced optimization with robustness testing.
+
+    Improvements over v1:
+    - Market Profile v2: 32 indicators across 6 clusters
+    - BrainScore v2: Multi-criteria scoring (Profitability, Risk, Consistency, Significance)
+    - Genetic Algorithm v2: Adaptive mutation, fitness sharing, multi-point crossover
+    - Robustness Testing: Walk-Forward, Monte Carlo, Sensitivity, Slippage, Noise
+    - Memory System v2: Similarity-based retrieval with 32D vectors
+
+    Args:
+        config: Configuration dict with:
+            - symbol: str
+            - timeframe: str or list
+            - strategy: { type: str, params: dict }
+            - capital: { initial: float, orderPct: float }
+            - risk: { pyramiding: int, commission: float }
+            - range: { from: str, to: str } (optional)
+        job_id: Job ID for progress tracking
+        progress_cb: Optional callback function(stage, progress, message)
+        skip_robustness: Skip robustness testing for speed
+
+    Returns:
+        Result dict with:
+            - success: bool
+            - strategy_hash: str
+            - market_profile: {...} (32 indicators)
+            - regime: str
+            - best_genomes: List of top genomes with explanations
+            - meta: { total_tested, from_memory, stable_genomes, elapsed_seconds, ... }
+            - log: List of optimization log entries
+    """
+    return _quant_brain_v2_core(config, job_id=job_id, progress_cb=progress_cb, skip_robustness=skip_robustness)
 
 
 def generate_chart_data(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -195,6 +254,13 @@ __all__ = [
     "run_optimizer",
     "run_ai_agent",
     "run_quant_brain",
+    "run_quant_brain_v2",
     "generate_chart_data",
     "load_data",
+    # V2 modules
+    "market_profile_v2",
+    "brain_score",
+    "genome_optimizer_v2",
+    "robustness_testing",
+    "param_memory_v2",
 ]
