@@ -1,6 +1,17 @@
 import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
 import Dashboard from "./pages/Dashboard";
+import MemoryPage from "./pages/MemoryPage";
 import DebugView from "./pages/DebugView";
+
+const navLinkStyle = ({ isActive }) => ({
+  color: isActive ? "#22c55e" : "#9ca3af",
+  textDecoration: "none",
+  padding: "8px 16px",
+  borderRadius: "6px",
+  background: isActive ? "rgba(34,197,94,0.15)" : "transparent",
+  fontWeight: isActive ? "600" : "400",
+  transition: "all 0.2s ease",
+});
 
 function App() {
   return (
@@ -20,31 +31,14 @@ function App() {
           <span style={{ fontSize: "18px", fontWeight: "600", color: "#fff" }}>
             AI Backtest Platform
           </span>
-          <div style={{ display: "flex", gap: "16px" }}>
-            <NavLink
-              to="/"
-              style={({ isActive }) => ({
-                color: isActive ? "#8b5cf6" : "#9ca3af",
-                textDecoration: "none",
-                padding: "8px 16px",
-                borderRadius: "6px",
-                background: isActive ? "#8b5cf620" : "transparent",
-                fontWeight: isActive ? "600" : "400",
-              })}
-            >
+          <div style={{ display: "flex", gap: "12px" }}>
+            <NavLink to="/" style={navLinkStyle}>
               Optimizer
             </NavLink>
-            <NavLink
-              to="/debug"
-              style={({ isActive }) => ({
-                color: isActive ? "#8b5cf6" : "#9ca3af",
-                textDecoration: "none",
-                padding: "8px 16px",
-                borderRadius: "6px",
-                background: isActive ? "#8b5cf620" : "transparent",
-                fontWeight: isActive ? "600" : "400",
-              })}
-            >
+            <NavLink to="/memory" style={navLinkStyle}>
+              Memory
+            </NavLink>
+            <NavLink to="/debug" style={navLinkStyle}>
               Debug View
             </NavLink>
           </div>
@@ -53,6 +47,7 @@ function App() {
         {/* Routes */}
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/memory" element={<MemoryPage />} />
           <Route path="/debug" element={<DebugView />} />
         </Routes>
       </div>

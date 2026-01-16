@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { startAiAgent, startQuantBrain, getAiAgentResult, cancelAiAgent, createProgressStream } from "../api/optimizer";
-import MemoryPanel from "../components/MemoryPanel";
 
 import Header from "../components/Header";
 import StrategyTable from "../components/StrategyTable";
@@ -805,12 +804,6 @@ export default function Dashboard() {
                 })}
               </div>
             </div>
-
-            {/* Memory Panel - shows stored genomes */}
-            <MemoryPanel
-              symbol={currentInputs.symbol || "BTCUSDT"}
-              timeframe={(currentInputs.timeframes || ["30m"])[0]}
-            />
           </div>
 
           {/* ================= INPUT FULL WIDTH (remaining) ================= */}

@@ -83,12 +83,12 @@ services:
       - CELERY_WORKER_PREFETCH_MULTIPLIER=4
       - CELERY_TASK_ACKS_LATE=true
       # ═══════════════════════════════════════════════════════
-      # MAX CPU PERFORMANCE (i9-12900K: 16 cores)
+      # MAX CPU PERFORMANCE (Auto-detect: max 10 cores)
       # ═══════════════════════════════════════════════════════
-      - MAX_PARALLEL_RUNS=2000
-      - MAX_THREAD_WORKERS=16
+      - MAX_PARALLEL_RUNS=1000
+      - MAX_THREAD_WORKERS=8
       - PARALLEL_FITNESS=true
-      - NUMBA_NUM_THREADS=8
+      - NUMBA_NUM_THREADS=6
       - USE_FAST_STRATEGY=true
       - NUMBA_CACHE_DIR=/tmp/numba_cache
       # ═══════════════════════════════════════════════════════
@@ -120,10 +120,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 32G
-          cpus: '16'
+          memory: 16G
+          cpus: '8'
         reservations:
-          memory: 2G
+          memory: 1G
           cpus: '1'
 
   # Frontend - React app served by nginx
