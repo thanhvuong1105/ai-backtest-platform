@@ -21,7 +21,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # Configuration
-ROBUSTNESS_THRESHOLD = float(os.getenv("ROBUSTNESS_THRESHOLD", 0.7))  # Score must be >= 70% of original
+ROBUSTNESS_THRESHOLD = float(os.getenv("ROBUSTNESS_THRESHOLD", 0.5))  # Score must be >= 50% of original
 PERTURBATION_RUNS = int(os.getenv("ROBUSTNESS_RUNS", 5))  # Number of perturbation tests
 
 

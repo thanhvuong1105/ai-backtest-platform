@@ -83,6 +83,8 @@ def store_genome_result(record: Dict[str, Any]) -> bool:
     Returns:
         True if stored successfully
     """
+    import math
+
     try:
         r = get_redis()
 
@@ -91,6 +93,15 @@ def store_genome_result(record: Dict[str, Any]) -> bool:
         timeframe = record["timeframe"]
         genome_hash = record["genome_hash"]
         score = record.get("results", {}).get("score", 0)
+
+        # Validate score - must be a valid float (not NaN or inf)
+        if score is None or not isinstance(score, (int, float)):
+            score = 0.0
+        elif math.isnan(score) or math.isinf(score):
+            logger.warning(f"Invalid score {score} for genome {genome_hash}, setting to 0")
+            score = 0.0
+        else:
+            score = float(score)
 
         # Main genome key (permanent)
         key = f"{GENOME_KEY_PREFIX}{strategy_hash}:{symbol}:{timeframe}:{genome_hash}"

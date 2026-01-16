@@ -210,6 +210,117 @@ def create_random_genome() -> Dict:
     return repair_genome(genome)
 
 
+def genome_distance(genome1: Dict, genome2: Dict) -> float:
+    """
+    Calculate normalized distance between two genomes.
+
+    Compares all numeric parameters and returns a distance score (0-1).
+    Distance of 0 = identical, 1.0 = completely different.
+
+    Uses weighted Euclidean distance normalized by parameter ranges.
+    """
+    if not genome1 or not genome2:
+        return 1.0
+
+    total_distance = 0
+    total_weight = 0
+
+    blocks = ["entry", "sl", "tp_dual", "tp_rsi"]
+
+    for block in blocks:
+        block1 = genome1.get(block, {})
+        block2 = genome2.get(block, {})
+
+        for param in block1:
+            if param not in block2:
+                continue
+
+            v1 = block1[param]
+            v2 = block2[param]
+
+            # Skip non-numeric parameters
+            if not isinstance(v1, (int, float)) or not isinstance(v2, (int, float)):
+                continue
+
+            # Get parameter range from bounds
+            param_bounds = PARAM_BOUNDS.get(block, {})
+            if param not in param_bounds:
+                continue
+
+            min_val, max_val = param_bounds[param]
+            param_range = max_val - min_val
+            if param_range == 0:
+                param_range = 1
+
+            # Normalized distance for this parameter
+            distance = abs(v1 - v2) / param_range
+            total_distance += distance
+            total_weight += 1
+
+    if total_weight == 0:
+        return 0.0
+
+    # Average normalized distance
+    avg_distance = total_distance / total_weight
+    # Clamp to [0, 1]
+    return min(1.0, max(0.0, avg_distance))
+
+
+def filter_diverse_genomes(
+    genomes: List[Dict],
+    scores: List[float],
+    min_distance: float = 0.15
+) -> List[Dict]:
+    """
+    Filter genomes to ensure minimum distance between selected genomes.
+
+    Greedily selects highest-scoring genomes while ensuring each new
+    genome is at least min_distance away from all previously selected.
+
+    Args:
+        genomes: List of genomes
+        scores: Corresponding fitness scores
+        min_distance: Minimum distance between genomes (0-1)
+
+    Returns:
+        Filtered list of diverse genomes (in descending score order)
+    """
+    if not genomes:
+        return []
+
+    # Sort by score (descending)
+    sorted_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+
+    selected = []
+    selected_indices = []
+
+    for idx in sorted_indices:
+        genome = genomes[idx]
+
+        # Check distance to all selected genomes
+        is_diverse = True
+        for selected_idx in selected_indices:
+            distance = genome_distance(genome, genomes[selected_idx])
+            if distance < min_distance:
+                is_diverse = False
+                logger.debug(
+                    f"Genome {idx} too close to {selected_idx} "
+                    f"(distance={distance:.3f}, threshold={min_distance})"
+                )
+                break
+
+        if is_diverse:
+            selected.append(genome)
+            selected_indices.append(idx)
+
+    logger.info(
+        f"Diversity filter: {len(selected)}/{len(genomes)} genomes selected "
+        f"(min_distance={min_distance})"
+    )
+
+    return selected
+
+
 # ═══════════════════════════════════════════════════════
 # EVOLUTIONARY OPTIMIZER
 # ═══════════════════════════════════════════════════════
@@ -529,8 +640,18 @@ class GenomeOptimizer:
 
         # Get top genomes from final population
         final_scores = self.evaluate_population(population)
-        sorted_indices = sorted(range(len(final_scores)), key=lambda i: final_scores[i], reverse=True)
-        top_genomes = [population[i] for i in sorted_indices[:20]]
+
+        # Apply diversity filter to ensure top genomes are different from each other
+        # This prevents near-duplicate genomes from appearing as Top 1, Top 2, etc.
+        top_genomes = filter_diverse_genomes(population, final_scores, min_distance=0.15)
+
+        # If diversity filter removed too many genomes, include some close ones
+        # to ensure we have enough results
+        if len(top_genomes) < 5:
+            sorted_indices = sorted(range(len(final_scores)), key=lambda i: final_scores[i], reverse=True)
+            top_genomes_unfiltered = [population[i] for i in sorted_indices[:20]]
+            logger.info(f"Diversity filter resulted in only {len(top_genomes)} genomes, including unfiltered top 20")
+            top_genomes = top_genomes_unfiltered
 
         # Fallback if no best genome found (all scores were -inf)
         if self.best_genome is None and population:

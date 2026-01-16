@@ -773,6 +773,15 @@ def quant_brain_recommend(
     # Limit top genomes for faster execution
     limited_genomes = top_genomes[:top_genome_limit]
 
+    # Track which genomes are newly discovered vs from seed
+    seed_genome_hashes = set()
+    for seed_genome in seed_genomes:
+        try:
+            seed_hash = generate_genome_hash(seed_genome)
+            seed_genome_hashes.add(seed_hash)
+        except Exception:
+            pass
+
     results = []
     total_backtest = len(limited_genomes) * len(symbols) * len(timeframes)
     completed = 0
@@ -796,6 +805,9 @@ def quant_brain_recommend(
             try:
                 result = future.result()
                 if result.get("summary", {}).get("totalTrades", 0) > 0:
+                    # Mark if this genome is newly discovered (not from seed)
+                    genome_hash = generate_genome_hash(result.get("genome", {}))
+                    result["is_newly_discovered"] = genome_hash not in seed_genome_hashes
                     results.append(result)
             except Exception as e:
                 logger.debug(f"Backtest failed: {e}")
@@ -893,62 +905,170 @@ def quant_brain_recommend(
     top = final_results[:top_n]
 
     # ═══════════════════════════════════════════════════════
+    # 9.5 ENSURE AT LEAST 1 NEWLY-DISCOVERED GENOME IN TOP
+    # ═══════════════════════════════════════════════════════
+    # Check if any newly-discovered genomes are already in top
+    newly_discovered_in_top = any(r.get("is_newly_discovered", False) for r in top)
+
+    if not newly_discovered_in_top and len(final_results) > len(top):
+        # Find the best newly-discovered genome not yet in top
+        best_new = None
+        best_new_idx = -1
+        for idx, result in enumerate(final_results[len(top):], start=len(top)):
+            if result.get("is_newly_discovered", False):
+                best_new = result
+                best_new_idx = idx
+                break
+
+        if best_new is not None:
+            # Replace lowest-scoring item in top with this newly-discovered genome
+            if top:
+                top[-1] = best_new
+                logger.info(
+                    f"Ensured at least 1 newly-discovered genome in top: "
+                    f"replaced position {len(top)} with newly-discovered "
+                    f"(score={best_new.get('summary', {}).get('brainScore', 0):.2f})"
+                )
+
+    # ═══════════════════════════════════════════════════════
     # 10. WRITE TO PARAMMEMORY (BRAIN_MODE only)
     # ═══════════════════════════════════════════════════════
+    # Logic: Chọn Top 5 genomes dựa trên PNL + PF (kết hợp)
+    # - Lấy unique genomes từ Top 5 PNL và Top 5 PF
+    # - Memory sẽ tự động xếp hạng theo score (sorted set trong Redis)
+    # - CHỈ LƯU nếu Range > 11 tháng (để đảm bảo chất lượng BXH)
     stored_count = 0
+    TOP_N_TO_STORE = 5  # Chỉ lưu Top 5 genomes mỗi lần chạy
+    MIN_RANGE_MONTHS = 11  # Tối thiểu 11 tháng để được lưu vào Memory
+
+    # Check backtest range duration
+    def calculate_range_months(range_from: str, range_to: str) -> float:
+        """Calculate number of months between two dates."""
+        from datetime import datetime
+        try:
+            if not range_from or not range_to:
+                return 0
+            date_from = datetime.strptime(range_from, "%Y-%m-%d")
+            date_to = datetime.strptime(range_to, "%Y-%m-%d")
+            delta = date_to - date_from
+            return delta.days / 30.44  # Average days per month
+        except Exception:
+            return 0
+
+    range_from = cfg.get("range", {}).get("from", "")
+    range_to = cfg.get("range", {}).get("to", "")
+    range_months = calculate_range_months(range_from, range_to)
 
     if mode == MODE_BRAIN:
-        # BRAIN MODE: Write robust genomes to memory
-        emit_progress(95, 100, {"phase": "storing_memory"})
+        # Check if range is >= 11 months before saving to Memory
+        if range_months < MIN_RANGE_MONTHS:
+            emit_progress(95, 100, {
+                "phase": "skipping_memory_short_range",
+                "range_months": round(range_months, 1),
+                "min_required": MIN_RANGE_MONTHS
+            })
+            logger.info(
+                f"BRAIN mode: Skipping Memory write - Range {range_months:.1f} months < {MIN_RANGE_MONTHS} months required"
+            )
+        else:
+            # BRAIN MODE: Write TOP 5 genomes based on PNL + PF
+            emit_progress(95, 100, {"phase": "storing_memory"})
 
-        # Only store genomes that passed robustness
-        genomes_to_store = [r for r in results if r.get("robustness_passed", False)]
+            # Sort by PNL (Net Profit) - descending
+            sorted_by_pnl = sorted(
+                final_results,
+                key=lambda x: x.get("summary", {}).get("netProfit", 0),
+                reverse=True
+            )
+            top_pnl = sorted_by_pnl[:TOP_N_TO_STORE]
 
-        for result in genomes_to_store:
-            try:
-                genome = result.get("genome", {})
-                genome_hash = generate_genome_hash(genome)
+            # Sort by PF (Profit Factor) - descending
+            sorted_by_pf = sorted(
+                final_results,
+                key=lambda x: x.get("summary", {}).get("profitFactor", 0),
+                reverse=True
+            )
+            top_pf = sorted_by_pf[:TOP_N_TO_STORE]
 
-                summary = result.get("summary", {})
+            # Combine unique genomes from Top PNL + Top PF
+            seen_hashes = set()
+            genomes_to_store = []
 
-                # Downsample equity curve for storage (100 points max)
-                equity_curve = result.get("equityCurve", [])
-                equity_curve_downsampled = downsample_curve(equity_curve, 100)
+            # Add Top PNL genomes first
+            for result in top_pnl:
+                genome_hash = generate_genome_hash(result.get("genome", {}))
+                if genome_hash not in seen_hashes:
+                    seen_hashes.add(genome_hash)
+                    genomes_to_store.append(result)
 
-                record = {
-                    "strategy_hash": strategy_hash,
-                    "symbol": result.get("symbol"),
-                    "timeframe": result.get("timeframe"),
-                    "genome_hash": genome_hash,
-                    "market_profile": market_profile,
-                    "genome": genome,
-                    "results": {
-                        "pf": summary.get("profitFactor", 0),
-                        "winrate": summary.get("winrate", 0),
-                        "max_dd": summary.get("maxDrawdownPct", 0),
-                        "net_profit": summary.get("netProfit", 0),
-                        "net_profit_pct": summary.get("netProfitPct", 0),
-                        "total_trades": summary.get("totalTrades", 0),
-                        "score": summary.get("brainScore", 0),
-                        "ulcer_index": summary.get("ulcerIndex", 0),
-                        "loss_streak": summary.get("maxLossStreak", 0),
-                        "robustness_score": result.get("robustness_score", 0),
-                    },
-                    # Store downsampled equity curve for Memory page visualization
-                    "equity_curve": equity_curve_downsampled,
-                    # Store backtest period
-                    "backtest_start": summary.get("startDate") or cfg.get("startDate"),
-                    "backtest_end": summary.get("endDate") or cfg.get("endDate"),
-                    "timestamp": int(time.time()),
-                    "test_count": 1
-                }
+            # Add Top PF genomes (only if not already added)
+            for result in top_pf:
+                genome_hash = generate_genome_hash(result.get("genome", {}))
+                if genome_hash not in seen_hashes:
+                    seen_hashes.add(genome_hash)
+                    genomes_to_store.append(result)
 
-                if store_genome_result(record):
-                    stored_count += 1
-            except Exception as e:
-                logger.debug(f"Failed to store genome: {e}")
+            # Limit to TOP_N_TO_STORE (prioritize by combined score)
+            # Sort by combined score: PNL_rank + PF_rank (lower = better)
+            def get_combined_rank(result):
+                genome_hash = generate_genome_hash(result.get("genome", {}))
+                pnl_rank = next((i for i, r in enumerate(sorted_by_pnl) if generate_genome_hash(r.get("genome", {})) == genome_hash), 999)
+                pf_rank = next((i for i, r in enumerate(sorted_by_pf) if generate_genome_hash(r.get("genome", {})) == genome_hash), 999)
+                return pnl_rank + pf_rank
 
-        logger.info(f"Stored {stored_count} robust genomes to ParamMemory")
+            genomes_to_store.sort(key=get_combined_rank)
+            genomes_to_store = genomes_to_store[:TOP_N_TO_STORE]
+
+            logger.info(
+                f"BRAIN mode: Storing TOP {len(genomes_to_store)} genomes to Memory "
+                f"(selected by PNL + PF from {len(final_results)} total, range={range_months:.1f} months)"
+            )
+
+            for result in genomes_to_store:
+                try:
+                    genome = result.get("genome", {})
+                    genome_hash = generate_genome_hash(genome)
+
+                    summary = result.get("summary", {})
+
+                    # Downsample equity curve for storage (100 points max)
+                    equity_curve = result.get("equityCurve", [])
+                    equity_curve_downsampled = downsample_curve(equity_curve, 100)
+
+                    record = {
+                        "strategy_hash": strategy_hash,
+                        "symbol": result.get("symbol"),
+                        "timeframe": result.get("timeframe"),
+                        "genome_hash": genome_hash,
+                        "market_profile": market_profile,
+                        "genome": genome,
+                        "results": {
+                            "pf": summary.get("profitFactor", 0),
+                            "winrate": summary.get("winrate", 0),
+                            "max_dd": summary.get("maxDrawdownPct", 0),
+                            "net_profit": summary.get("netProfit", 0),
+                            "net_profit_pct": summary.get("netProfitPct", 0),
+                            "total_trades": summary.get("totalTrades", 0),
+                            "score": summary.get("brainScore", 0),
+                            "ulcer_index": summary.get("ulcerIndex", 0),
+                            "loss_streak": summary.get("maxLossStreak", 0),
+                            "robustness_score": result.get("robustness_score", 0),
+                        },
+                        # Store downsampled equity curve for Memory page visualization
+                        "equity_curve": equity_curve_downsampled,
+                        # Store backtest period (from cfg.range.from/to)
+                        "backtest_start": cfg.get("range", {}).get("from") or summary.get("startDate"),
+                        "backtest_end": cfg.get("range", {}).get("to") or summary.get("endDate"),
+                        "timestamp": int(time.time()),
+                        "test_count": 1
+                    }
+
+                    if store_genome_result(record):
+                        stored_count += 1
+                except Exception as e:
+                    logger.debug(f"Failed to store genome: {e}")
+
+            logger.info(f"Stored {stored_count} robust genomes to ParamMemory")
     else:
         # ULTRA/FAST MODE: Skip memory write
         emit_progress(95, 100, {"phase": "skipping_memory_write"})
@@ -1015,6 +1135,17 @@ def quant_brain_recommend(
             "robustness_rejected": len(fragile_results),
             "stored_to_memory": stored_count,
             "elapsed_seconds": round(elapsed, 2),
+            # ═══════════════════════════════════════════════════════
+            # KPI: Newly-discovered genomes in Top BXH
+            # ═══════════════════════════════════════════════════════
+            "newly_discovered_in_top": sum(
+                1 for r in top if r.get("is_newly_discovered", False)
+            ),
+            "newly_discovered_in_top_percent": round(
+                (sum(1 for r in top if r.get("is_newly_discovered", False)) / len(top) * 100)
+                if top else 0,
+                1
+            ),
             "memory_stats": memory_stats,
             "bounds_expanded": bounds_expanded,
             "expansion_details": expansion_details if bounds_expanded else [],

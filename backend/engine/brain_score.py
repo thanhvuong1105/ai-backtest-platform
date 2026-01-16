@@ -493,14 +493,11 @@ def _calculate_significance_score(metrics: Dict[str, float]) -> float:
     Calculate Statistical Significance component score (0-100).
 
     Factors:
-    - Total Trades (40%) - minimum sample size
-    - P-Value (inverted) (40%) - statistical significance
-    - T-Statistic (20%) - strength of result
-    """
-    # Total Trades - scale: 10 to 100
-    total_trades = metrics.get("totalTrades", 0)
-    trades_score = _scale_metric(total_trades, 10, 100, 0, 100)
+    - P-Value (inverted) (60%) - statistical significance
+    - T-Statistic (40%) - strength of result
 
+    Note: Total Trades removed from scoring formula.
+    """
     # P-Value - scale: 0.5 (bad) to 0.01 (good), inverted
     p_value = metrics.get("pValue", 0.5)
     p_score = _scale_metric(p_value, 0.5, 0.01, 0, 100)  # Inverted
@@ -509,7 +506,7 @@ def _calculate_significance_score(metrics: Dict[str, float]) -> float:
     t_stat = abs(metrics.get("tStatistic", 0))
     t_score = _scale_metric(t_stat, 0, 3, 0, 100)
 
-    return trades_score * 0.4 + p_score * 0.4 + t_score * 0.2
+    return p_score * 0.6 + t_score * 0.4
 
 
 def _scale_metric(value: float, in_min: float, in_max: float, out_min: float, out_max: float) -> float:

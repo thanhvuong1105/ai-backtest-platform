@@ -69,37 +69,38 @@ services:
       args:
         - BUILDKIT_INLINE_CACHE=1
     container_name: backtest-celery
-    command: celery -A app.services.celery_app.celery worker --loglevel=info -Q default --concurrency=${CELERY_CONCURRENCY:-8}
+    # Balanced concurrency (6 workers)
+    command: celery -A app.services.celery_app.celery worker --loglevel=info -Q default --concurrency=${CELERY_CONCURRENCY:-6}
     environment:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - JOB_TIMEOUT_SEC=3600
       - MAX_STDOUT_SIZE=20971520
-      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-8}
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-6}
       - PROJECT_ROOT=/app
       - PYTHONUNBUFFERED=1
       # Celery worker optimization
-      - CELERY_WORKER_PREFETCH_MULTIPLIER=4
+      - CELERY_WORKER_PREFETCH_MULTIPLIER=3
       - CELERY_TASK_ACKS_LATE=true
       # ═══════════════════════════════════════════════════════
-      # MAX CPU PERFORMANCE (Auto-detect: max 10 cores)
+      # BALANCED CPU PERFORMANCE
       # ═══════════════════════════════════════════════════════
-      - MAX_PARALLEL_RUNS=1000
-      - MAX_THREAD_WORKERS=8
+      - MAX_PARALLEL_RUNS=750
+      - MAX_THREAD_WORKERS=6
       - PARALLEL_FITNESS=true
-      - NUMBA_NUM_THREADS=6
+      - NUMBA_NUM_THREADS=5
       - USE_FAST_STRATEGY=true
       - NUMBA_CACHE_DIR=/tmp/numba_cache
       # ═══════════════════════════════════════════════════════
-      # MAX CACHE (64GB RAM)
+      # BALANCED CACHE
       # ═══════════════════════════════════════════════════════
-      - INDICATOR_CACHE_SIZE=4096
-      - DATA_CACHE_SIZE=1024
-      - INDICATOR_RESULT_CACHE_SIZE=2048
-      - REDIS_POOL_SIZE=50
+      - INDICATOR_CACHE_SIZE=2048
+      - DATA_CACHE_SIZE=512
+      - INDICATOR_RESULT_CACHE_SIZE=1024
+      - REDIS_POOL_SIZE=30
       - DATA_PRELOAD=true
-      - PROGRESS_BATCH_SIZE=100
+      - PROGRESS_BATCH_SIZE=75
       # ═══════════════════════════════════════════════════════
       # GENETIC ALGORITHM - GIỮ NGUYÊN NHƯ CŨ
       # ═══════════════════════════════════════════════════════
@@ -120,11 +121,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 16G
-          cpus: '8'
+          memory: 8G
+          cpus: '7'
         reservations:
-          memory: 1G
-          cpus: '1'
+          memory: 2G
+          cpus: '2'
 
   # Frontend - React app served by nginx
   frontend:

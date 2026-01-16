@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { getMemoryStats, getMemoryGenomes } from "../api/optimizer";
 import { buildEquitySeries } from "../utils/equityTransform";
 import {
@@ -23,13 +23,16 @@ export default function MemoryPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedGenome, setSelectedGenome] = useState(null);
-  const [sortBy, setSortBy] = useState("score");
+  const [sortBy] = useState("pf");  // Fixed to PF only
   const [overlayLimit, setOverlayLimit] = useState("5");
   const [visibleSeries, setVisibleSeries] = useState({});
 
   // Filters
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframe, setTimeframe] = useState("30m");
+
+  // Use ref to track previous genomes for rank comparison (avoid infinite loop)
+  const prevGenomesRef = useRef([]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -44,13 +47,35 @@ export default function MemoryPage() {
         setStats(statsRes);
       }
       if (genomesRes.success) {
+        const newGenomes = genomesRes.genomes || [];
+
+        // Sort new genomes by PF to get their new ranks
+        const sortedNew = [...newGenomes].sort((a, b) => (b.pf || 0) - (a.pf || 0));
+
+        // Build a map of genome_hash -> previous rank from saved ref
+        const prevRankMap = {};
+        const sortedOld = [...prevGenomesRef.current].sort((a, b) => (b.pf || 0) - (a.pf || 0));
+        sortedOld.forEach((g, idx) => {
+          if (g.genome_hash) {
+            prevRankMap[g.genome_hash] = idx + 1;
+          }
+        });
+
         // Add rank info to genomes
-        const genomesWithRank = (genomesRes.genomes || []).map((g, idx) => ({
-          ...g,
-          currentRank: idx + 1,
-          previousRank: g.previousRank || null,
-          isNew: !g.previousRank,
-        }));
+        const genomesWithRank = sortedNew.map((g, idx) => {
+          const newRank = idx + 1;
+          const prevRank = prevRankMap[g.genome_hash];
+          return {
+            ...g,
+            currentRank: newRank,
+            previousRank: prevRank || null,
+            isNew: !prevRank,
+          };
+        });
+
+        // Save current genomes to ref for next comparison
+        prevGenomesRef.current = genomesWithRank;
+
         setGenomes(genomesWithRank);
 
         // Initialize visible series for top genomes
@@ -71,26 +96,12 @@ export default function MemoryPage() {
     fetchData();
   }, [fetchData]);
 
-  // Sort genomes based on selected criteria
+  // Sort genomes by PF (Profit Factor) - descending
   const sortedGenomes = useMemo(() => {
     const arr = [...genomes];
-    arr.sort((a, b) => {
-      switch (sortBy) {
-        case "pnl":
-          return (b.netProfitPct || 0) - (a.netProfitPct || 0);
-        case "dd":
-          return (a.maxDD || 0) - (b.maxDD || 0);
-        case "pf":
-          return (b.pf || 0) - (a.pf || 0);
-        case "wr":
-          return (b.winrate || 0) - (a.winrate || 0);
-        case "score":
-        default:
-          return (b.score || 0) - (a.score || 0);
-      }
-    });
+    arr.sort((a, b) => (b.pf || 0) - (a.pf || 0));
     return arr.map((g, idx) => ({ ...g, displayRank: idx + 1 }));
-  }, [genomes, sortBy]);
+  }, [genomes]);
 
   // Filter genomes for chart based on overlay limit
   const chartGenomes = useMemo(() => {
@@ -180,6 +191,17 @@ export default function MemoryPage() {
   const formatMoney = (val) => {
     if (val === undefined || val === null) return "-";
     return `$${Number(val).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  };
+
+  // Format date string to full format (DD/MM/YYYY)
+  const formatDateShort = (dateStr) => {
+    if (!dateStr) return "-";
+    // Handle "YYYY-MM-DD" or "YYYY-MM-DD HH:mm:ss" format
+    const parts = dateStr.split(" ")[0].split("-");
+    if (parts.length >= 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;  // DD/MM/YYYY
+    }
+    return dateStr.slice(0, 10);
   };
 
   return (
@@ -402,23 +424,7 @@ export default function MemoryPage() {
           <div style={panel}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <h2 style={{ margin: 0, fontSize: 16 }}>Bảng xếp hạng Genomes</h2>
-            </div>
-
-            {/* Sort buttons */}
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              {["score", "pnl", "dd", "pf", "wr"].map((k) => (
-                <button
-                  key={k}
-                  onClick={() => setSortBy(k)}
-                  style={{
-                    ...chipBtn,
-                    background: sortBy === k ? "rgba(34,197,94,0.15)" : chipBtn.background,
-                    color: sortBy === k ? "#22c55e" : "#e5e7eb",
-                  }}
-                >
-                  Sort: {k.toUpperCase()}
-                </button>
-              ))}
+              <span style={{ fontSize: 12, opacity: 0.6 }}>Sorted by PF</span>
             </div>
 
             {/* Table */}
@@ -435,6 +441,7 @@ export default function MemoryPage() {
                     <th style={thStyle}>DD</th>
                     <th style={thStyle}>Trades</th>
                     <th style={thStyle}>Score</th>
+                    <th style={thStyle}>Range</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -488,6 +495,14 @@ export default function MemoryPage() {
                         <td style={tdStyle}>{g.totalTrades || "-"}</td>
                         <td style={{ ...tdStyle, fontWeight: 600, color: "#22c55e" }}>
                           {g.score?.toFixed(2) || "-"}
+                        </td>
+                        <td style={{ ...tdStyle, fontSize: 10, opacity: 0.8 }}>
+                          {g.backtest_start && g.backtest_end ? (
+                            <div>
+                              <div>{formatDateShort(g.backtest_start)}</div>
+                              <div style={{ opacity: 0.6 }}>→ {formatDateShort(g.backtest_end)}</div>
+                            </div>
+                          ) : "-"}
                         </td>
                       </tr>
                     );

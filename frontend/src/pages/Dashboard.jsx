@@ -322,6 +322,8 @@ export default function Dashboard() {
       slippage: Number(currentInputs.properties?.slippage ?? 0),
     },
     range: computeRange(),
+    // ✅ Always use BRAIN mode to save genomes to Memory
+    mode: useQuantBrain ? "brain" : undefined,
   };
 
     try {
@@ -339,6 +341,9 @@ export default function Dashboard() {
         eventSourceRef.current = null;
       }
 
+      // Track start time for elapsed calculation
+      const startTimeRef = Date.now();
+
       // Use SSE for real-time progress streaming
       const eventSource = createProgressStream(jid, {
         onProgress: (prog) => {
@@ -351,11 +356,14 @@ export default function Dashboard() {
 
           console.log("[SSE Progress]", prog);
           const percent = prog.total ? Math.min(100, Math.round((prog.progress / prog.total) * 100)) : 0;
+          const elapsedMs = Date.now() - startTimeRef;
           setProgress({
             percent,
             completed: prog.progress || 0,
             total: prog.total || 0,
-            status: prog.status || "running"
+            status: prog.status || "running",
+            phase: prog.extra?.phase || prog.phase || "",
+            elapsedMs,
           });
         },
         onDone: async (prog) => {
@@ -1321,19 +1329,27 @@ export default function Dashboard() {
 
               <button
                 onClick={handleRun}
-                disabled={loading || !currentStrategy?.supported || rangeInvalid}
-                style={{ ...primaryBtn, opacity: !currentStrategy?.supported ? 0.6 : 1, background: useQuantBrain ? "#10b981" : undefined }}
+                disabled={loading || jobId || !currentStrategy?.supported || rangeInvalid}
+                style={{ ...primaryBtn, opacity: (!currentStrategy?.supported || jobId) ? 0.6 : 1, background: useQuantBrain ? "#10b981" : undefined }}
               >
-                {loading ? "Đang chạy..." : useQuantBrain ? "Chạy Quant Brain" : "Chạy AI Agent"}
+                {loading || jobId ? "Đang chạy..." : useQuantBrain ? "Chạy Quant Brain" : "Chạy AI Agent"}
               </button>
               {loading && (
-                <div style={{ minWidth: 180, display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ fontSize: 12, opacity: 0.8, minWidth: 120 }}>
-                    {progress.status === "running"
-                      ? `Running... ${progress.completed}/${progress.total} (${progress.percent}%)`
-                      : progress.status}
+                <div style={{ minWidth: 280, display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ fontSize: 12, opacity: 0.8, minWidth: 200 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ color: "#22c55e", fontWeight: 600 }}>
+                        {formatPhase(progress.phase)}
+                      </span>
+                      <span style={{ opacity: 0.6 }}>
+                        {progress.percent}%
+                      </span>
+                      <span style={{ opacity: 0.5, fontSize: 11 }}>
+                        ({formatElapsed(progress.elapsedMs)})
+                      </span>
+                    </div>
                   </div>
-                  <div style={{ flex: 1, height: 6, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                  <div style={{ flex: 1, height: 6, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden", minWidth: 100 }}>
                     <div
                       style={{
                         width: `${progress.percent || 0}%`,
@@ -2050,4 +2066,49 @@ function fmt(v) {
 function fmtPct(v) {
   if (v === undefined || v === null) return "-";
   return `${Number(v).toFixed(2)}%`;
+}
+
+// Format phase name to human-readable Vietnamese
+function formatPhase(phase) {
+  const phaseMap = {
+    // Phase 0-5%: Initialization
+    "initializing": "Khởi tạo...",
+    "data_preloaded": "Tải dữ liệu",
+    "strategy_hash": "Tạo strategy hash",
+    // Phase 5-20%: Classification & Seeding
+    "regime_classified": "Phân loại thị trường",
+    "seeds_loaded": "Tải seed genomes",
+    "coherence_validated": "Kiểm tra coherence",
+    // Phase 20-65%: Optimization
+    "optimization_starting": "Bắt đầu tối ưu",
+    "optimizing": "Đang tối ưu genome",
+    "optimization_complete": "Hoàn thành tối ưu",
+    // Phase 65-85%: Backtesting
+    "backtesting_top": "Backtest top genomes",
+    "backtesting": "Đang backtest",
+    "backtesting_complete": "Hoàn thành backtest",
+    // Phase 85-95%: Robustness Testing
+    "robustness_testing": "Test độ ổn định",
+    "robustness_complete": "Hoàn thành test độ ổn định",
+    "skipping_robustness": "Bỏ qua test độ ổn định",
+    "robustness_skipped": "Đã bỏ qua test độ ổn định",
+    // Phase 95-100%: Finalization
+    "scoring": "Tính điểm BrainScore",
+    "storing_memory": "Lưu vào Memory",
+    "skipping_memory_write": "Bỏ qua lưu Memory",
+    "skipping_memory_short_range": "Bỏ qua (Range < 11 tháng)",
+    "saving_memory": "Lưu vào Memory",
+    "complete": "Hoàn thành!",
+    "done": "Hoàn thành!",
+  };
+  return phaseMap[phase] || phase || "Đang xử lý...";
+}
+
+// Format elapsed time to mm:ss
+function formatElapsed(ms) {
+  if (!ms || ms < 0) return "0:00";
+  const totalSec = Math.floor(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return `${min}:${sec.toString().padStart(2, "0")}`;
 }
