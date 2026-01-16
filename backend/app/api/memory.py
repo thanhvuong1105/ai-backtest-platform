@@ -70,6 +70,7 @@ async def get_genomes(
     for g in genomes:
         results = g.get("results", {})
         genome_data = g.get("genome", {})
+        equity_curve = g.get("equity_curve", [])
 
         # Map keys: quant_brain saves with lowercase/underscore, UI expects camelCase
         # quant_brain saves: pf, winrate, max_dd, net_profit, net_profit_pct, total_trades, score
@@ -90,6 +91,11 @@ async def get_genomes(
             "test_count": g.get("test_count", 1),
             "genome": genome_data,
             "market_profile": g.get("market_profile", {}),
+            # Real equity curve data from stored record
+            "equityCurve": equity_curve,
+            # Backtest period
+            "backtest_start": g.get("backtest_start", ""),
+            "backtest_end": g.get("backtest_end", ""),
         })
 
     return {

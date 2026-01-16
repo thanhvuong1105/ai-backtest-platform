@@ -910,6 +910,11 @@ def quant_brain_recommend(
                 genome_hash = generate_genome_hash(genome)
 
                 summary = result.get("summary", {})
+
+                # Downsample equity curve for storage (100 points max)
+                equity_curve = result.get("equityCurve", [])
+                equity_curve_downsampled = downsample_curve(equity_curve, 100)
+
                 record = {
                     "strategy_hash": strategy_hash,
                     "symbol": result.get("symbol"),
@@ -929,6 +934,11 @@ def quant_brain_recommend(
                         "loss_streak": summary.get("maxLossStreak", 0),
                         "robustness_score": result.get("robustness_score", 0),
                     },
+                    # Store downsampled equity curve for Memory page visualization
+                    "equity_curve": equity_curve_downsampled,
+                    # Store backtest period
+                    "backtest_start": summary.get("startDate") or cfg.get("startDate"),
+                    "backtest_end": summary.get("endDate") or cfg.get("endDate"),
                     "timestamp": int(time.time()),
                     "test_count": 1
                 }

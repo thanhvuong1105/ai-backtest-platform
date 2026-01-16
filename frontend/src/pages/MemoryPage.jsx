@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { getMemoryStats, getMemoryGenomes } from "../api/optimizer";
+import { buildEquitySeries } from "../utils/equityTransform";
 import {
   LineChart,
   Line,
@@ -7,9 +8,10 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
+  ReferenceLine,
 } from "recharts";
 
-// Color palette for equity curves
+// Color palette for equity curves (same as Dashboard)
 const COLORS = [
   "#22c55e", "#3b82f6", "#a855f7", "#f59e0b", "#ef4444",
   "#06b6d4", "#ec4899", "#84cc16", "#14b8a6", "#f97316",
@@ -53,8 +55,8 @@ export default function MemoryPage() {
 
         // Initialize visible series for top genomes
         const vis = {};
-        genomesWithRank.slice(0, 5).forEach((g, idx) => {
-          vis[`g${idx}`] = true;
+        genomesWithRank.slice(0, 5).forEach((_, idx) => {
+          vis[`s${idx + 1}`] = true;
         });
         setVisibleSeries(vis);
       }
@@ -97,56 +99,33 @@ export default function MemoryPage() {
     return sortedGenomes.slice(0, n);
   }, [sortedGenomes, overlayLimit]);
 
-  // Build equity data for chart overlay
+  // Check if we have real equity data
+  const hasRealEquityData = useMemo(() => {
+    return chartGenomes.some((g) => g.equityCurve && g.equityCurve.length > 0);
+  }, [chartGenomes]);
+
+  // Build equity data using buildEquitySeries (same as Dashboard)
   const equityData = useMemo(() => {
     if (!chartGenomes.length) return [];
 
-    // Find max length and create normalized data points
-    const maxLen = Math.max(
-      ...chartGenomes.map((g) => (g.equityCurve || []).length || 0)
-    );
+    // Transform genomes to match buildEquitySeries expected format
+    const resultsForChart = chartGenomes.map((g, idx) => ({
+      strategyId: `s${idx + 1}`,
+      equityCurve: g.equityCurve || [],
+      timeframe: timeframe,
+      meta: { timeframe: timeframe },
+    }));
 
-    if (maxLen === 0) {
-      // If no equity curves, create mock data based on netProfitPct
-      const points = [];
-      for (let i = 0; i <= 100; i += 10) {
-        const point = { index: i };
-        chartGenomes.forEach((g, idx) => {
-          const progress = i / 100;
-          const finalPnl = g.netProfitPct || 0;
-          // Simple linear interpolation
-          point[`g${idx}`] = finalPnl * progress;
-        });
-        points.push(point);
-      }
-      return points;
+    // Use buildEquitySeries for consistent chart rendering
+    const series = buildEquitySeries(resultsForChart, "pct");
+
+    // If no real data, return empty (don't create fake data)
+    if (!series || series.length === 0) {
+      return [];
     }
 
-    // Normalize all curves to same length (100 points)
-    const normalizedLen = 100;
-    const points = [];
-
-    for (let i = 0; i < normalizedLen; i++) {
-      const point = { index: i };
-      chartGenomes.forEach((g, gIdx) => {
-        const curve = g.equityCurve || [];
-        if (curve.length === 0) {
-          // Linear interpolation for missing curves
-          const progress = i / normalizedLen;
-          point[`g${gIdx}`] = (g.netProfitPct || 0) * progress;
-        } else {
-          const srcIdx = Math.floor((i / normalizedLen) * curve.length);
-          const srcPoint = curve[Math.min(srcIdx, curve.length - 1)];
-          const baseEq = curve[0]?.equity || 1;
-          const currentEq = srcPoint?.equity || baseEq;
-          point[`g${gIdx}`] = ((currentEq - baseEq) / baseEq) * 100;
-        }
-      });
-      points.push(point);
-    }
-
-    return points;
-  }, [chartGenomes]);
+    return series;
+  }, [chartGenomes, timeframe]);
 
   // Calculate Y domain for chart
   const { yDomain, tickFmt } = useMemo(() => {
@@ -168,14 +147,14 @@ export default function MemoryPage() {
     });
 
     if (!Number.isFinite(min) || !Number.isFinite(max)) {
-      min = -1;
-      max = 1;
+      min = -10;
+      max = 10;
     }
 
-    const pad = (max - min) * 0.1 || 1;
+    const pad = (max - min) * 0.1 || 5;
     return {
       yDomain: [min - pad, max + pad],
-      tickFmt: (v) => `${Number(v).toFixed(2)}%`,
+      tickFmt: (v) => `${Number(v).toFixed(1)}%`,
     };
   }, [equityData, visibleSeries]);
 
@@ -210,10 +189,10 @@ export default function MemoryPage() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700 }}>
-              🧠 Quant Brain Memory
+              Quant Brain Memory
             </h1>
             <p style={{ margin: "8px 0 0", opacity: 0.7, fontSize: 14 }}>
-              Bảng xếp hạng genomes từ các lần tối ưu hóa
+              Bảng xếp hạng genomes từ các lần tối ưu hóa (BRAIN mode)
             </p>
           </div>
 
@@ -241,7 +220,7 @@ export default function MemoryPage() {
             </select>
 
             <button onClick={fetchData} style={refreshBtn} disabled={loading}>
-              {loading ? "Loading..." : "🔄 Refresh"}
+              {loading ? "Loading..." : "Refresh"}
             </button>
           </div>
         </div>
@@ -275,7 +254,7 @@ export default function MemoryPage() {
           {/* Left: Equity Chart */}
           <div style={panel}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <h2 style={{ margin: 0, fontSize: 16 }}>Equity / PnL (overlay)</h2>
+              <h2 style={{ margin: 0, fontSize: 16 }}>Equity / PnL % (overlay)</h2>
               <div style={{ display: "flex", gap: 8 }}>
                 {["5", "10", "20", "50", "all"].map((n) => (
                   <button
@@ -286,7 +265,7 @@ export default function MemoryPage() {
                       const vis = {};
                       const limit = n === "all" ? sortedGenomes.length : parseInt(n, 10);
                       sortedGenomes.slice(0, limit).forEach((_, idx) => {
-                        vis[`g${idx}`] = true;
+                        vis[`s${idx + 1}`] = true;
                       });
                       setVisibleSeries(vis);
                     }}
@@ -305,40 +284,55 @@ export default function MemoryPage() {
             <div style={chartContainer}>
               {equityData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={equityData}>
-                    <XAxis dataKey="index" tick={false} axisLine={false} />
+                  <LineChart data={equityData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                    <XAxis
+                      dataKey="time"
+                      tick={{ fontSize: 10, fill: "#64748b" }}
+                      tickFormatter={(v) => {
+                        if (!v) return "";
+                        // Show only date part for cleaner display
+                        return v.slice(0, 10);
+                      }}
+                      interval="preserveStartEnd"
+                      minTickGap={50}
+                    />
                     <YAxis
                       domain={yDomain}
                       tickFormatter={tickFmt}
                       axisLine={false}
                       tickLine={false}
-                      stroke="#334155"
+                      tick={{ fontSize: 11, fill: "#64748b" }}
+                      width={60}
                     />
+                    <ReferenceLine y={0} stroke="#475569" strokeDasharray="3 3" />
                     <Tooltip
-                      content={({ payload }) => {
+                      content={({ payload, label }) => {
                         if (!payload || !payload.length) return null;
                         const items = payload
                           .filter((p) => p && p.value !== undefined)
                           .map((p) => {
-                            const gIdx = parseInt(p.dataKey.replace("g", ""), 10);
-                            const genome = chartGenomes[gIdx];
+                            const idx = parseInt(p.dataKey.replace("s", ""), 10) - 1;
+                            const genome = chartGenomes[idx];
                             return {
                               id: p.dataKey,
                               value: p.value,
                               color: p.stroke,
                               genome,
-                              rank: genome?.displayRank || gIdx + 1,
+                              rank: idx + 1,
                             };
                           })
                           .sort((a, b) => b.value - a.value);
 
                         return (
                           <div style={tooltipStyle}>
+                            <div style={{ fontSize: 11, marginBottom: 6, color: "#94a3b8" }}>{label}</div>
                             {items.slice(0, 10).map((item) => (
-                              <div key={item.id} style={{ display: "flex", gap: 8, fontSize: 12, alignItems: "center" }}>
+                              <div key={item.id} style={{ display: "flex", gap: 8, fontSize: 12, alignItems: "center", marginBottom: 2 }}>
                                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: item.color }} />
                                 <span style={{ color: "#94a3b8" }}>#{item.rank}</span>
-                                <span style={{ color: item.color, fontWeight: 600 }}>{item.value.toFixed(2)}%</span>
+                                <span style={{ color: item.value >= 0 ? "#22c55e" : "#ef4444", fontWeight: 600 }}>
+                                  {item.value >= 0 ? "+" : ""}{item.value.toFixed(2)}%
+                                </span>
                               </div>
                             ))}
                           </div>
@@ -346,7 +340,7 @@ export default function MemoryPage() {
                       }}
                     />
                     {chartGenomes.map((genome, idx) => {
-                      const key = `g${idx}`;
+                      const key = `s${idx + 1}`;
                       const visible = visibleSeries[key];
                       const isTop1 = idx === 0;
                       return (
@@ -358,6 +352,7 @@ export default function MemoryPage() {
                           strokeWidth={isTop1 ? 2.5 : 1.5}
                           opacity={visible ? (isTop1 ? 1 : 0.7) : 0.1}
                           dot={false}
+                          connectNulls={false}
                           hide={!visible}
                         />
                       );
@@ -366,7 +361,16 @@ export default function MemoryPage() {
                 </ResponsiveContainer>
               ) : (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", opacity: 0.5 }}>
-                  {loading ? "Loading chart data..." : "No equity data available"}
+                  {loading ? "Loading chart data..." : (
+                    hasRealEquityData ? "Processing equity data..." : (
+                      <div style={{ textAlign: "center" }}>
+                        <div>Chưa có equity data</div>
+                        <div style={{ fontSize: 12, marginTop: 8 }}>
+                          Chạy Quant Brain ở <span style={{ color: "#22c55e" }}>BRAIN mode</span> để lưu equity curves
+                        </div>
+                      </div>
+                    )
+                  )}
                 </div>
               )}
             </div>
@@ -374,7 +378,7 @@ export default function MemoryPage() {
             {/* Legend */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
               {chartGenomes.slice(0, 10).map((genome, idx) => {
-                const key = `g${idx}`;
+                const key = `s${idx + 1}`;
                 const visible = visibleSeries[key];
                 return (
                   <button
@@ -424,8 +428,7 @@ export default function MemoryPage() {
                   <tr style={{ background: "rgba(255,255,255,0.05)" }}>
                     <th style={thStyle}>#</th>
                     <th style={thStyle}>▲▼</th>
-                    <th style={thStyle}>Symbol</th>
-                    <th style={thStyle}>TF</th>
+                    <th style={thStyle}>ID</th>
                     <th style={thStyle}>Total PNL</th>
                     <th style={thStyle}>PF</th>
                     <th style={thStyle}>WR</th>
@@ -468,8 +471,7 @@ export default function MemoryPage() {
                             rankChange.display
                           )}
                         </td>
-                        <td style={tdStyle}>{symbol}</td>
-                        <td style={tdStyle}>{timeframe}</td>
+                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 11 }}>{g.id}</td>
                         <td style={tdStyle}>
                           <div style={{ color: (g.netProfitPct || 0) >= 0 ? "#22c55e" : "#ef4444" }}>
                             {formatMoney(g.netProfit)}
@@ -497,7 +499,9 @@ export default function MemoryPage() {
                 <div style={{ padding: 32, textAlign: "center", opacity: 0.6 }}>
                   Chưa có genome nào được lưu.
                   <br />
-                  Chạy Quant Brain ở BRAIN mode để bắt đầu!
+                  <span style={{ fontSize: 12 }}>
+                    Chạy Quant Brain ở <span style={{ color: "#22c55e" }}>BRAIN mode</span> để bắt đầu!
+                  </span>
                 </div>
               )}
             </div>
@@ -518,7 +522,7 @@ export default function MemoryPage() {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
                 {/* Performance Metrics */}
                 <div>
-                  <h4 style={sectionTitle}>📊 Performance Metrics</h4>
+                  <h4 style={sectionTitle}>Performance Metrics</h4>
                   <div style={detailGrid}>
                     <DetailRow label="Symbol" value={symbol} />
                     <DetailRow label="Timeframe" value={timeframe} />
@@ -533,9 +537,9 @@ export default function MemoryPage() {
                   </div>
                 </div>
 
-                {/* Rank History */}
+                {/* Rank & Period */}
                 <div>
-                  <h4 style={sectionTitle}>📈 Rank Info</h4>
+                  <h4 style={sectionTitle}>Rank Info</h4>
                   <div style={detailGrid}>
                     <DetailRow label="Current Rank" value={`#${selectedGenome.currentRank || "-"}`} />
                     <DetailRow
@@ -546,7 +550,7 @@ export default function MemoryPage() {
                     <DetailRow label="Test Count" value={selectedGenome.test_count || 1} />
                   </div>
 
-                  <h4 style={{ ...sectionTitle, marginTop: 16 }}>📅 Backtest Period</h4>
+                  <h4 style={{ ...sectionTitle, marginTop: 16 }}>Backtest Period</h4>
                   <div style={detailGrid}>
                     <DetailRow label="Start" value={selectedGenome.backtest_start || "-"} />
                     <DetailRow label="End" value={selectedGenome.backtest_end || "-"} />
@@ -556,7 +560,7 @@ export default function MemoryPage() {
 
               {/* Strategy Parameters */}
               <div style={{ marginTop: 20 }}>
-                <h4 style={sectionTitle}>⚙️ Strategy Parameters</h4>
+                <h4 style={sectionTitle}>Strategy Parameters</h4>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
                   {selectedGenome.genome && Object.entries(selectedGenome.genome).map(([block, params]) => (
                     <div key={block} style={paramBlock}>
@@ -579,6 +583,23 @@ export default function MemoryPage() {
                   ))}
                 </div>
               </div>
+
+              {/* Market Profile */}
+              {selectedGenome.market_profile && Object.keys(selectedGenome.market_profile).length > 0 && (
+                <div style={{ marginTop: 20 }}>
+                  <h4 style={sectionTitle}>Market Profile (when saved)</h4>
+                  <div style={{ ...detailGrid, display: "flex", gap: 20, flexWrap: "wrap" }}>
+                    {Object.entries(selectedGenome.market_profile).map(([k, v]) => (
+                      <div key={k} style={{ minWidth: 100 }}>
+                        <span style={{ opacity: 0.7, fontSize: 11 }}>{k}: </span>
+                        <span style={{ fontWeight: 600, color: "#60a5fa" }}>
+                          {typeof v === "number" ? v.toFixed(4) : String(v)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
