@@ -25,8 +25,8 @@ from .regime_classifier import MarketRegime, sample_params_for_regime
 logger = logging.getLogger(__name__)
 
 # Configuration
-POPULATION_SIZE = int(os.getenv("GENOME_POPULATION_SIZE", 50))
-GENERATIONS = int(os.getenv("GENOME_GENERATIONS", 10))
+POPULATION_SIZE = int(os.getenv("GENOME_POPULATION_SIZE", 30))
+GENERATIONS = int(os.getenv("GENOME_GENERATIONS", 3))
 MUTATION_RATE = float(os.getenv("GENOME_MUTATION_RATE", 0.15))
 CROSSOVER_RATE = float(os.getenv("GENOME_CROSSOVER_RATE", 0.7))
 TOURNAMENT_SIZE = int(os.getenv("GENOME_TOURNAMENT_SIZE", 5))

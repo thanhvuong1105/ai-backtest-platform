@@ -718,22 +718,23 @@ def quant_brain_recommend(
         top_genome_limit = 10  # Return only top 10 genomes
         logger.info(f"ULTRA mode: Apple Silicon optimized - pop={population_size}, top={top_genome_limit}")
     elif num_combos <= 1:
-        # Single combo: DEEP SEARCH (reduced from 10 to 5 generations)
-        # Balanced quality: 100 genomes × 5 generations = 500 tests per phase
-        generations_per_phase = 5  # Faster convergence
-        population_size = 100  # Large population for diverse exploration
-        top_genome_limit = 20  # Return top 20 genomes
-        logger.info(f"BRAIN mode: Deep search - pop={population_size}, gen={generations_per_phase}")
-    elif num_combos <= 3:
-        # 2-3 combos: balanced quality
-        generations_per_phase = 4
-        population_size = 50  # Medium population
-        top_genome_limit = 15
-    else:
-        # 4+ combos: speed priority (keep original)
+        # Single combo: BALANCED MODE (optimized for long date ranges)
+        # Reduced from 100×5 to 30×3 for faster completion
+        # 30 genomes × 3 generations × 4 phases = 360 backtests
         generations_per_phase = 3
         population_size = 30
+        top_genome_limit = 10  # Return top 10 genomes
+        logger.info(f"BRAIN mode: Balanced - pop={population_size}, gen={generations_per_phase}")
+    elif num_combos <= 3:
+        # 2-3 combos: balanced quality
+        generations_per_phase = 3
+        population_size = 25
         top_genome_limit = 10
+    else:
+        # 4+ combos: speed priority
+        generations_per_phase = 2
+        population_size = 20
+        top_genome_limit = 8
 
     logger.info(
         f"Adaptive params: {num_combos} combos → "

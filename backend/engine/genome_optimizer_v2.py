@@ -34,8 +34,8 @@ from .regime_classifier import MarketRegime, sample_params_for_regime
 logger = logging.getLogger(__name__)
 
 # Configuration defaults
-DEFAULT_POPULATION_SIZE = int(os.getenv("GENOME_POPULATION_SIZE", 50))
-DEFAULT_GENERATIONS = int(os.getenv("GENOME_GENERATIONS", 10))
+DEFAULT_POPULATION_SIZE = int(os.getenv("GENOME_POPULATION_SIZE", 30))
+DEFAULT_GENERATIONS = int(os.getenv("GENOME_GENERATIONS", 3))
 DEFAULT_MUTATION_RATE_MAX = 0.3
 DEFAULT_MUTATION_RATE_MIN = 0.05
 DEFAULT_CROSSOVER_RATE = 0.8
