@@ -105,7 +105,7 @@ PROGRESS_INTERVAL = 0.5
 MODE_ULTRA = "ultra"
 MODE_FAST = "fast"
 MODE_BRAIN = "brain"
-DEFAULT_MODE = MODE_FAST
+DEFAULT_MODE = MODE_BRAIN  # Always use BRAIN mode to save to Memory
 
 # Early termination thresholds (ULTRA mode)
 EARLY_STOP_DD_PCT = 70.0  # Kill backtest if DD > 70%
