@@ -578,11 +578,15 @@ def quant_brain_recommend(
     tuning_context = None
     tuning_summary = {}
 
+    emit_progress(1, 100, {"phase": "detecting_resources"}, force=True)
+
     if AUTO_TUNING_ENABLED:
         try:
             # Detect system resources and log
+            emit_progress(2, 100, {"phase": "detecting_system"}, force=True)
             resources = detect_system_resources()
 
+            emit_progress(3, 100, {"phase": "configuring_tuner"}, force=True)
             # Initialize auto-tuning context
             tuning_context = AutoTuningContext(
                 enabled=True,
@@ -595,46 +599,56 @@ def quant_brain_recommend(
             )
             tuning_context.__enter__()
 
-            emit_progress(1, 100, {
-                "phase": "auto_tuning_initialized",
+            emit_progress(4, 100, {
+                "phase": "auto_tuning_ready",
                 "effective_cpus": resources.effective_cpus,
                 "effective_memory_gb": round(resources.effective_memory_gb, 1),
                 "is_docker": resources.is_docker,
-            })
+            }, force=True)
             logger.info(f"Auto-tuning initialized: {resources.effective_cpus} CPUs, {resources.effective_memory_gb:.1f}GB RAM")
         except Exception as e:
             logger.warning(f"Failed to initialize auto-tuning: {e}")
             tuning_context = None
+            emit_progress(4, 100, {"phase": "tuning_skipped"}, force=True)
+    else:
+        emit_progress(4, 100, {"phase": "tuning_disabled"}, force=True)
 
     # ═══════════════════════════════════════════════════════
     # 0.5. DATA PRELOAD (ULTRA mode optimization)
     # ═══════════════════════════════════════════════════════
+    emit_progress(5, 100, {"phase": "checking_preload"}, force=True)
     if mode == MODE_ULTRA and DATA_PRELOAD:
         # Preload all data into memory for maximum speed
         preloaded_count = preload_all_data()
         if preloaded_count > 0:
             logger.info(f"ULTRA mode: Preloaded {preloaded_count} datasets for max speed")
-        emit_progress(2, 100, {"phase": "data_preloaded", "count": preloaded_count})
+        emit_progress(6, 100, {"phase": "data_preloaded", "count": preloaded_count}, force=True)
+    else:
+        emit_progress(6, 100, {"phase": "preload_skipped"}, force=True)
 
     # ═══════════════════════════════════════════════════════
     # 1. GENERATE STRATEGY HASH
     # ═══════════════════════════════════════════════════════
+    emit_progress(7, 100, {"phase": "generating_hash"}, force=True)
     strategy_type = cfg.get("strategy", {}).get("type", "rf_st_rsi")
     strategy_hash = generate_strategy_hash(strategy_type, ENGINE_VERSION)
 
+    emit_progress(8, 100, {"phase": "registering_strategy"}, force=True)
     # Register strategy
     register_strategy(strategy_hash, strategy_type, ENGINE_VERSION)
 
-    emit_progress(5, 100, {"phase": "strategy_hash", "hash": strategy_hash})
+    emit_progress(9, 100, {"phase": "strategy_hash", "hash": strategy_hash}, force=True)
 
     # ═══════════════════════════════════════════════════════
     # 2. CLASSIFY MARKET REGIME
     # ═══════════════════════════════════════════════════════
+    emit_progress(10, 100, {"phase": "loading_market_data"}, force=True)
     symbols = cfg.get("symbols", ["BTCUSDT"])
     timeframes = cfg.get("timeframes", ["1h"])
     symbol = symbols[0] if symbols else "BTCUSDT"
     timeframe = timeframes[0] if timeframes else "1h"
 
+    emit_progress(11, 100, {"phase": "classifying_regime"}, force=True)
     # Load data for regime classification (use preloaded if available)
     try:
         df = get_preloaded(symbol, timeframe)
@@ -648,15 +662,17 @@ def quant_brain_recommend(
         regime = MarketRegime.RANGING
         market_profile = {}
 
-    emit_progress(10, 100, {"phase": "regime_classified", "regime": regime.value})
+    emit_progress(12, 100, {"phase": "regime_classified", "regime": regime.value}, force=True)
 
     # ═══════════════════════════════════════════════════════
     # 3. QUERY PARAMMEMORY FOR SEEDS
     # ═══════════════════════════════════════════════════════
+    emit_progress(13, 100, {"phase": "querying_memory"}, force=True)
     seed_genomes = []
     memory_records = []  # Keep full records for bounds expansion
 
     try:
+        emit_progress(14, 100, {"phase": "loading_similar_genomes"}, force=True)
         # Get similar genomes from memory
         similar = query_similar_genomes(
             strategy_hash, symbol, timeframe, market_profile, top_n=20
@@ -664,6 +680,7 @@ def quant_brain_recommend(
         memory_records.extend(similar)
         seed_genomes.extend([g["genome"] for g in similar if "genome" in g])
 
+        emit_progress(15, 100, {"phase": "loading_top_performers"}, force=True)
         # Get top performers across all symbols/timeframes
         top_all = get_all_top_genomes(strategy_hash, symbols, timeframes, limit_per_combo=10)
         memory_records.extend(top_all)
@@ -676,6 +693,7 @@ def quant_brain_recommend(
     # ═══════════════════════════════════════════════════════
     # 3.5. AUTO-EXPAND BOUNDS FROM MEMORY
     # ═══════════════════════════════════════════════════════
+    emit_progress(16, 100, {"phase": "expanding_bounds"}, force=True)
     # Get effective bounds - auto-expands if memory has good genomes outside user range
     effective_bounds = get_effective_bounds(cfg, memory_records)
 
@@ -699,19 +717,21 @@ def quant_brain_recommend(
     if bounds_expanded:
         logger.info(f"Bounds auto-expanded from memory: {expansion_details}")
 
+    emit_progress(17, 100, {"phase": "sampling_regime_params"}, force=True)
     # Add regime-aware random samples
     regime_samples = sample_params_for_regime(regime, n_samples=10)
     seed_genomes.extend(regime_samples)
 
-    emit_progress(15, 100, {
+    emit_progress(18, 100, {
         "phase": "seeds_loaded",
         "count": len(seed_genomes),
         "bounds_expanded": bounds_expanded
-    })
+    }, force=True)
 
     # ═══════════════════════════════════════════════════════
     # 4. VALIDATE COHERENCE (mode-dependent)
     # ═══════════════════════════════════════════════════════
+    emit_progress(19, 100, {"phase": "validating_coherence"}, force=True)
     if mode == MODE_ULTRA:
         # ULTRA: Minimal filter - only check TP_mult >= SL_mult
         valid_seeds = []
@@ -733,7 +753,7 @@ def quant_brain_recommend(
         "phase": "coherence_validated",
         "valid": len(valid_seeds),
         "invalid": len(invalid_seeds)
-    })
+    }, force=True)
 
     # ═══════════════════════════════════════════════════════
     # 5. CREATE FITNESS FUNCTION (mode-dependent)
@@ -760,10 +780,11 @@ def quant_brain_recommend(
     # ═══════════════════════════════════════════════════════
     # 6. RUN GENOME OPTIMIZATION (ADAPTIVE PARAMS)
     # ═══════════════════════════════════════════════════════
-    emit_progress(25, 100, {"phase": "optimization_starting"})
+    emit_progress(21, 100, {"phase": "preparing_optimizer"}, force=True)
 
     num_combos = len(symbols) * len(timeframes)
 
+    emit_progress(22, 100, {"phase": "calculating_params"}, force=True)
     if mode == MODE_ULTRA:
         # ULTRA MODE: Maximum speed for Apple Silicon
         # No phased optimization - continuous loop
@@ -797,6 +818,7 @@ def quant_brain_recommend(
         f"top_genomes={top_genome_limit}"
     )
 
+    emit_progress(23, 100, {"phase": "creating_optimizer"}, force=True)
     optimizer = PhasedOptimizer(
         fitness_fn=fitness_fn,
         generations_per_phase=generations_per_phase,
@@ -804,13 +826,17 @@ def quant_brain_recommend(
         param_bounds=effective_bounds  # Pass expanded bounds
     )
 
+    emit_progress(24, 100, {"phase": "starting_evolution"}, force=True)
+
     def opt_progress(gen, total_gen, best_score):
+        # Optimization phase: 25% - 65% (40% total)
         progress = 25 + int(gen / total_gen * 40)
         emit_progress(progress, 100, {
             "phase": "optimizing",
             "generation": gen,
+            "total_generations": total_gen,
             "best_score": best_score
-        })
+        }, force=True)
 
     best_genome, best_score, top_genomes = optimizer.optimize(
         seed_genomes=valid_seeds,
@@ -818,12 +844,13 @@ def quant_brain_recommend(
         progress_cb=opt_progress
     )
 
-    emit_progress(65, 100, {"phase": "optimization_complete", "best_score": best_score})
+    emit_progress(66, 100, {"phase": "optimization_complete", "best_score": best_score}, force=True)
 
     # ═══════════════════════════════════════════════════════
     # 7. BACKTEST TOP GENOMES (PARALLEL) - Limited for speed
     # ═══════════════════════════════════════════════════════
-    emit_progress(70, 100, {"phase": "backtesting_top"})
+    emit_progress(67, 100, {"phase": "preparing_backtest"}, force=True)
+    emit_progress(68, 100, {"phase": "backtesting_top"}, force=True)
 
     # Limit top genomes for faster execution
     limited_genomes = top_genomes[:top_genome_limit]
@@ -871,7 +898,11 @@ def quant_brain_recommend(
                     logger.info(f"[AUTO-TUNE] Applied: {decision.action.value} (reason: {decision.reason.value})")
                 tuning_context.generation_start()  # Start next batch
 
-            emit_progress(progress, 100, {"phase": "backtesting", "completed": completed})
+            emit_progress(progress, 100, {
+                "phase": "backtesting",
+                "completed": completed,
+                "total": total_backtest
+            }, force=True)
 
             try:
                 result = future.result()
@@ -883,17 +914,18 @@ def quant_brain_recommend(
             except Exception as e:
                 logger.debug(f"Backtest failed: {e}")
 
-    emit_progress(85, 100, {"phase": "backtesting_complete", "results": len(results)})
+    emit_progress(85, 100, {"phase": "backtesting_complete", "results": len(results)}, force=True)
 
     # ═══════════════════════════════════════════════════════
     # 8. ROBUSTNESS FILTER (BRAIN_MODE only)
     # ═══════════════════════════════════════════════════════
+    emit_progress(86, 100, {"phase": "preparing_robustness"}, force=True)
     robust_results = []
     fragile_results = []
 
     if mode == MODE_BRAIN:
         # BRAIN MODE: Run full robustness testing
-        emit_progress(90, 100, {"phase": "robustness_testing"})
+        emit_progress(87, 100, {"phase": "robustness_testing"}, force=True)
 
         for idx, result in enumerate(results):
             genome = result.get("genome", {})
@@ -920,16 +952,16 @@ def quant_brain_recommend(
                 result["robustness_score"] = 0
                 fragile_results.append(result)
 
-        emit_progress(92, 100, {
+        emit_progress(90, 100, {
             "phase": "robustness_complete",
             "robust": len(robust_results),
             "fragile": len(fragile_results)
-        })
+        }, force=True)
 
         logger.info(f"Robustness filter: {len(robust_results)} robust, {len(fragile_results)} fragile")
     else:
         # ULTRA/FAST MODE: Skip robustness, mark all as passed
-        emit_progress(90, 100, {"phase": "skipping_robustness"})
+        emit_progress(88, 100, {"phase": "skipping_robustness"}, force=True)
 
         for result in results:
             result["robustness_passed"] = True
@@ -937,15 +969,16 @@ def quant_brain_recommend(
 
         robust_results = results
 
-        emit_progress(92, 100, {
+        emit_progress(90, 100, {
             "phase": "robustness_skipped",
             "robust": len(robust_results),
             "fragile": 0
-        })
+        }, force=True)
 
     # ═══════════════════════════════════════════════════════
     # 9. SORT AND RANK (mode-dependent)
     # ═══════════════════════════════════════════════════════
+    emit_progress(91, 100, {"phase": "ranking_results"}, force=True)
     # Prefer robust results, fallback to all results
     final_results = robust_results if robust_results else results
 
@@ -1030,20 +1063,22 @@ def quant_brain_recommend(
     range_to = cfg.get("range", {}).get("to", "")
     range_months = calculate_range_months(range_from, range_to)
 
+    emit_progress(92, 100, {"phase": "checking_memory_save"}, force=True)
+
     if mode == MODE_BRAIN:
         # Check if range is >= 11 months before saving to Memory
         if range_months < MIN_RANGE_MONTHS:
-            emit_progress(95, 100, {
+            emit_progress(93, 100, {
                 "phase": "skipping_memory_short_range",
                 "range_months": round(range_months, 1),
                 "min_required": MIN_RANGE_MONTHS
-            })
+            }, force=True)
             logger.info(
                 f"BRAIN mode: Skipping Memory write - Range {range_months:.1f} months < {MIN_RANGE_MONTHS} months required"
             )
         else:
             # BRAIN MODE: Write TOP 5 genomes based on PNL + PF
-            emit_progress(95, 100, {"phase": "storing_memory"})
+            emit_progress(93, 100, {"phase": "storing_memory"}, force=True)
 
             # Sort by PNL (Net Profit) - descending
             sorted_by_pnl = sorted(
@@ -1139,17 +1174,20 @@ def quant_brain_recommend(
                 except Exception as e:
                     logger.debug(f"Failed to store genome: {e}")
 
+            emit_progress(94, 100, {"phase": "memory_stored", "count": stored_count}, force=True)
             logger.info(f"Stored {stored_count} robust genomes to ParamMemory")
     else:
         # ULTRA/FAST MODE: Skip memory write
-        emit_progress(95, 100, {"phase": "skipping_memory_write"})
+        emit_progress(93, 100, {"phase": "skipping_memory_write"}, force=True)
         logger.info(f"{mode.upper()} mode: Skipping ParamMemory write")
 
     # ═══════════════════════════════════════════════════════
     # 11. BUILD RESPONSE
     # ═══════════════════════════════════════════════════════
+    emit_progress(95, 100, {"phase": "building_response"}, force=True)
     elapsed = time.time() - start_time
 
+    emit_progress(96, 100, {"phase": "cleanup_tuning"}, force=True)
     # Cleanup auto-tuning and get summary
     if tuning_context:
         try:
@@ -1159,6 +1197,9 @@ def quant_brain_recommend(
         except Exception as e:
             logger.warning(f"Failed to cleanup auto-tuning: {e}")
 
+    emit_progress(97, 100, {"phase": "preparing_stats"}, force=True)
+    emit_progress(98, 100, {"phase": "finalizing"}, force=True)
+    emit_progress(99, 100, {"phase": "almost_done"}, force=True)
     emit_progress(100, 100, {"phase": "complete", "mode": mode}, force=True)
 
     # Memory stats
