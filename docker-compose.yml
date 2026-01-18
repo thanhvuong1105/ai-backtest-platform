@@ -80,9 +80,11 @@ services:
       - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-6}
       - PROJECT_ROOT=/app
       - PYTHONUNBUFFERED=1
-      # Celery worker optimization
-      - CELERY_WORKER_PREFETCH_MULTIPLIER=3
-      - CELERY_TASK_ACKS_LATE=true
+      # Celery worker optimization - Prevent task redelivery
+      - CELERY_WORKER_PREFETCH_MULTIPLIER=1
+      - CELERY_TASK_ACKS_LATE=false
+      - CELERY_TASK_REJECT_ON_WORKER_LOST=false
+      - CELERY_VISIBILITY_TIMEOUT=86400
       # ═══════════════════════════════════════════════════════
       # BALANCED CPU PERFORMANCE
       # ═══════════════════════════════════════════════════════
