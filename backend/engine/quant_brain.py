@@ -9,6 +9,7 @@ Main orchestrator that combines:
 4. Evolutionary genome optimization
 5. Coherence validation
 6. Robustness filtering
+7. Auto-tuning (OOM prevention & performance optimization)
 
 This is a BRAIN that learns from every market it observes.
 """
@@ -65,6 +66,22 @@ from .data_loader import load_csv, get_preloaded, preload_all_data
 from .scoring import score_strategy
 from .guards import equity_smoothness
 
+# Auto-tuning - OOM prevention & performance optimization
+from .performance_monitor import (
+    PerformanceMonitor,
+    RuntimeMetrics,
+    detect_system_resources,
+    get_performance_monitor,
+    start_monitoring,
+    stop_monitoring
+)
+from .auto_tuner import (
+    AutoTuner,
+    AutoTuningContext,
+    get_auto_tuner,
+    check_and_tune
+)
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -117,6 +134,10 @@ DATA_PRELOAD = os.getenv("DATA_PRELOAD", "true").lower() == "true"
 # Scoring constants
 DOWNSAMPLE_EQUITY_POINTS = 400
 MAX_TRADES_RETURN = 1200
+
+# Auto-tuning configuration
+AUTO_TUNING_ENABLED = os.getenv("AUTO_TUNING_ENABLED", "true").lower() == "true"
+AUTO_TUNING_INTERVAL = int(os.getenv("AUTO_TUNING_INTERVAL", 10))  # Check every N genomes
 
 
 # ═══════════════════════════════════════════════════════
@@ -552,7 +573,41 @@ def quant_brain_recommend(
     emit_progress(0, 100, {"phase": "initializing", "mode": mode}, force=True)
 
     # ═══════════════════════════════════════════════════════
-    # 0. DATA PRELOAD (ULTRA mode optimization)
+    # 0. AUTO-TUNING INITIALIZATION
+    # ═══════════════════════════════════════════════════════
+    tuning_context = None
+    tuning_summary = {}
+
+    if AUTO_TUNING_ENABLED:
+        try:
+            # Detect system resources and log
+            resources = detect_system_resources()
+
+            # Initialize auto-tuning context
+            tuning_context = AutoTuningContext(
+                enabled=True,
+                initial_params={
+                    "batch_size": min(20, MAX_WORKERS * 2),
+                    "max_workers": MAX_WORKERS,
+                    "chunk_size": 100_000,
+                    "queue_depth_limit": 100,
+                }
+            )
+            tuning_context.__enter__()
+
+            emit_progress(1, 100, {
+                "phase": "auto_tuning_initialized",
+                "effective_cpus": resources.effective_cpus,
+                "effective_memory_gb": round(resources.effective_memory_gb, 1),
+                "is_docker": resources.is_docker,
+            })
+            logger.info(f"Auto-tuning initialized: {resources.effective_cpus} CPUs, {resources.effective_memory_gb:.1f}GB RAM")
+        except Exception as e:
+            logger.warning(f"Failed to initialize auto-tuning: {e}")
+            tuning_context = None
+
+    # ═══════════════════════════════════════════════════════
+    # 0.5. DATA PRELOAD (ULTRA mode optimization)
     # ═══════════════════════════════════════════════════════
     if mode == MODE_ULTRA and DATA_PRELOAD:
         # Preload all data into memory for maximum speed
@@ -786,7 +841,14 @@ def quant_brain_recommend(
     total_backtest = len(limited_genomes) * len(symbols) * len(timeframes)
     completed = 0
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    # Get dynamic worker count from auto-tuner if available
+    effective_workers = MAX_WORKERS
+    if tuning_context:
+        tuning_params = tuning_context.get_params()
+        effective_workers = tuning_params.get("max_workers", MAX_WORKERS)
+        logger.info(f"Using auto-tuned workers: {effective_workers}")
+
+    with ThreadPoolExecutor(max_workers=effective_workers) as executor:
         futures = []
 
         for genome in limited_genomes:
@@ -800,6 +862,15 @@ def quant_brain_recommend(
         for future in as_completed(futures):
             completed += 1
             progress = 70 + int(completed / total_backtest * 15)
+
+            # Auto-tuning check every N completions
+            if tuning_context and completed % AUTO_TUNING_INTERVAL == 0:
+                tuning_context.generation_end()  # Mark completion for throughput tracking
+                decision = tuning_context.check()
+                if decision:
+                    logger.info(f"[AUTO-TUNE] Applied: {decision.action.value} (reason: {decision.reason.value})")
+                tuning_context.generation_start()  # Start next batch
+
             emit_progress(progress, 100, {"phase": "backtesting", "completed": completed})
 
             try:
@@ -1079,6 +1150,15 @@ def quant_brain_recommend(
     # ═══════════════════════════════════════════════════════
     elapsed = time.time() - start_time
 
+    # Cleanup auto-tuning and get summary
+    if tuning_context:
+        try:
+            tuning_summary = tuning_context.tuner.get_summary() if tuning_context.tuner else {}
+            tuning_context.__exit__(None, None, None)
+            logger.info(f"Auto-tuning session complete: {tuning_summary.get('total_adjustments', 0)} adjustments made")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup auto-tuning: {e}")
+
     emit_progress(100, 100, {"phase": "complete", "mode": mode}, force=True)
 
     # Memory stats
@@ -1155,6 +1235,13 @@ def quant_brain_recommend(
                 "population_size": population_size,
                 "top_genome_limit": top_genome_limit,
             },
+            # Auto-tuning summary
+            "auto_tuning": {
+                "enabled": AUTO_TUNING_ENABLED,
+                "adjustments_made": tuning_summary.get("total_adjustments", 0) if tuning_summary else 0,
+                "final_params": tuning_summary.get("current_params", {}) if tuning_summary else {},
+                "recent_decisions": tuning_summary.get("recent_decisions", []) if tuning_summary else [],
+            } if AUTO_TUNING_ENABLED else None,
         }
     }
 

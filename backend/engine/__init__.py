@@ -42,6 +42,10 @@ from . import genome_optimizer_v2
 from . import robustness_testing
 from . import param_memory_v2
 
+# Import auto-tuning modules
+from . import performance_monitor
+from . import auto_tuner
+
 
 def run_backtest(
     config: Dict[str, Any],
@@ -263,4 +267,7 @@ __all__ = [
     "genome_optimizer_v2",
     "robustness_testing",
     "param_memory_v2",
+    # Auto-tuning modules
+    "performance_monitor",
+    "auto_tuner",
 ]

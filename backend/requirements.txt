@@ -31,3 +31,6 @@ numpy>=1.26.0
 
 # Performance optimization
 numba>=0.60.0
+
+# System monitoring for auto-tuning
+psutil>=5.9.0

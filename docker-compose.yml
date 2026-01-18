@@ -111,6 +111,25 @@ services:
       # Robustness Testing - giữ nguyên
       - MONTE_CARLO_RUNS=500
       - WALK_FORWARD_WINDOWS=3
+      # ═══════════════════════════════════════════════════════
+      # AUTO-TUNING - Closed-loop OOM prevention
+      # ═══════════════════════════════════════════════════════
+      - AUTO_TUNING_ENABLED=true
+      - AUTO_TUNING_INTERVAL=10
+      - TUNING_COOLDOWN_SEC=15
+      # Thresholds
+      - TUNING_MEMORY_HIGH_PCT=85
+      - TUNING_MEMORY_SAFE_PCT=75
+      - TUNING_MEMORY_FREE_PCT=25
+      - TUNING_CPU_HIGH_PCT=95
+      - TUNING_CPU_NORMAL_PCT=85
+      # Limits
+      - TUNING_MIN_BATCH=5
+      - TUNING_MAX_BATCH=50
+      - TUNING_MIN_WORKERS=2
+      - TUNING_MAX_WORKERS=6
+      - TUNING_MIN_CHUNK=50000
+      - TUNING_MAX_CHUNK=500000
     volumes:
       # Mount data folder for market data CSVs
       - ./engine/data:/app/engine/data:ro
