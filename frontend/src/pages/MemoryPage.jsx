@@ -17,6 +17,16 @@ const COLORS = [
   "#06b6d4", "#ec4899", "#84cc16", "#14b8a6", "#f97316",
 ];
 
+// Color palette for timeframes (for multi-TF mode)
+const TF_COLORS = {
+  "5m": "#ef4444",   // red
+  "15m": "#f59e0b",  // amber
+  "30m": "#22c55e",  // green
+  "1h": "#3b82f6",   // blue
+  "4h": "#a855f7",   // purple
+  "1d": "#ec4899",   // pink
+};
+
 export default function MemoryPage() {
   const [stats, setStats] = useState(null);
   const [genomes, setGenomes] = useState([]);
@@ -30,6 +40,8 @@ export default function MemoryPage() {
   // Filters
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframe, setTimeframe] = useState("30m");
+  const [selectedTimeframes, setSelectedTimeframes] = useState(["30m"]);  // Multi-TF mode
+  const [multiTfMode, setMultiTfMode] = useState(false);  // Toggle for multi-TF view
 
   // Use ref to track previous genomes for rank comparison (avoid infinite loop)
   const prevGenomesRef = useRef([]);
@@ -111,16 +123,35 @@ export default function MemoryPage() {
     setLoading(true);
     setError(null);
     try {
-      const [statsRes, genomesRes] = await Promise.all([
-        getMemoryStats(),
-        getMemoryGenomes(symbol, timeframe, 100),
-      ]);
+      // Fetch stats first
+      const statsRes = await getMemoryStats();
+
+      // Determine which timeframes to fetch
+      const timeframesToFetch = multiTfMode ? selectedTimeframes : [timeframe];
+
+      // Fetch genomes for all selected timeframes in parallel
+      const genomesPromises = timeframesToFetch.map(tf =>
+        getMemoryGenomes(symbol, tf, 100)
+      );
+      const genomesResults = await Promise.all(genomesPromises);
+
+      // Combine results from all timeframes
+      let allGenomes = [];
+      genomesResults.forEach((genomesRes, idx) => {
+        if (genomesRes.success) {
+          const tfGenomes = (genomesRes.genomes || []).map(g => ({
+            ...g,
+            timeframe: timeframesToFetch[idx],  // Ensure TF is set
+          }));
+          allGenomes = [...allGenomes, ...tfGenomes];
+        }
+      });
 
       if (statsRes.success) {
         setStats(statsRes);
       }
-      if (genomesRes.success) {
-        const newGenomes = genomesRes.genomes || [];
+      if (allGenomes.length > 0 || !multiTfMode) {
+        const newGenomes = allGenomes;
 
         // Sort new genomes by PF to get their new ranks
         const sortedNew = [...newGenomes].sort((a, b) => (b.pf || 0) - (a.pf || 0));
@@ -217,7 +248,7 @@ export default function MemoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [symbol, timeframe, loadRankHistory, saveRankHistory, loadNewGenomesList, saveNewGenomesList]);
+  }, [symbol, timeframe, multiTfMode, selectedTimeframes, loadRankHistory, saveRankHistory, loadNewGenomesList, saveNewGenomesList]);
 
   useEffect(() => {
     fetchData();
@@ -390,7 +421,7 @@ export default function MemoryPage() {
             </p>
           </div>
 
-          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             {/* Symbol filter */}
             <select
               value={symbol}
@@ -402,16 +433,68 @@ export default function MemoryPage() {
               ))}
             </select>
 
-            {/* Timeframe filter */}
-            <select
-              value={timeframe}
-              onChange={(e) => setTimeframe(e.target.value)}
-              style={selectStyle}
+            {/* Multi-TF Toggle */}
+            <button
+              onClick={() => {
+                setMultiTfMode(!multiTfMode);
+                if (!multiTfMode && !selectedTimeframes.includes(timeframe)) {
+                  setSelectedTimeframes([timeframe]);
+                }
+              }}
+              style={{
+                ...chipBtn,
+                background: multiTfMode ? "rgba(59,130,246,0.2)" : "rgba(255,255,255,0.06)",
+                borderColor: multiTfMode ? "#3b82f6" : "rgba(255,255,255,0.1)",
+                color: multiTfMode ? "#3b82f6" : "#e5e7eb",
+              }}
             >
-              {(stats?.timeframes ? Object.keys(stats.timeframes) : ["30m"]).map((tf) => (
-                <option key={tf} value={tf}>{tf}</option>
-              ))}
-            </select>
+              {multiTfMode ? "📊 Multi-TF ON" : "Multi-TF"}
+            </button>
+
+            {/* Single Timeframe filter (when multi-TF is OFF) */}
+            {!multiTfMode && (
+              <select
+                value={timeframe}
+                onChange={(e) => setTimeframe(e.target.value)}
+                style={selectStyle}
+              >
+                {(stats?.timeframes ? Object.keys(stats.timeframes) : ["30m"]).map((tf) => (
+                  <option key={tf} value={tf}>{tf}</option>
+                ))}
+              </select>
+            )}
+
+            {/* Multi-Timeframe checkboxes (when multi-TF is ON) */}
+            {multiTfMode && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {(stats?.timeframes ? Object.keys(stats.timeframes) : ["5m", "15m", "30m", "1h", "4h"]).map((tf) => {
+                  const isSelected = selectedTimeframes.includes(tf);
+                  return (
+                    <button
+                      key={tf}
+                      onClick={() => {
+                        if (isSelected) {
+                          // Don't allow deselecting all
+                          if (selectedTimeframes.length > 1) {
+                            setSelectedTimeframes(selectedTimeframes.filter(t => t !== tf));
+                          }
+                        } else {
+                          setSelectedTimeframes([...selectedTimeframes, tf]);
+                        }
+                      }}
+                      style={{
+                        ...tfChipBtn,
+                        background: isSelected ? "rgba(34,197,94,0.2)" : "rgba(255,255,255,0.04)",
+                        borderColor: isSelected ? "#22c55e" : "rgba(255,255,255,0.1)",
+                        color: isSelected ? "#22c55e" : "#94a3b8",
+                      }}
+                    >
+                      {isSelected && "✓ "}{tf}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             <button onClick={fetchData} style={refreshBtn} disabled={loading}>
               {loading ? "Loading..." : "Refresh"}
@@ -595,7 +678,14 @@ export default function MemoryPage() {
           {/* Right: Leaderboard */}
           <div style={panel}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <h2 style={{ margin: 0, fontSize: 16 }}>Bảng xếp hạng Genomes</h2>
+              <h2 style={{ margin: 0, fontSize: 16 }}>
+                Bảng xếp hạng Genomes
+                {multiTfMode && selectedTimeframes.length > 1 && (
+                  <span style={{ fontSize: 12, fontWeight: 400, opacity: 0.7, marginLeft: 8 }}>
+                    ({selectedTimeframes.join(", ")})
+                  </span>
+                )}
+              </h2>
               <span style={{ fontSize: 12, opacity: 0.6 }}>Sorted by PF</span>
             </div>
 
@@ -645,7 +735,17 @@ export default function MemoryPage() {
                         <td style={{ ...tdStyle, textAlign: "center" }}>
                           <RankChangeIndicator genome={g} />
                         </td>
-                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 11 }}>{g.timeframe || timeframe}</td>
+                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 11 }}>
+                          <span style={{
+                            color: TF_COLORS[g.timeframe] || "#e5e7eb",
+                            fontWeight: multiTfMode ? 600 : 400,
+                            padding: multiTfMode ? "2px 6px" : 0,
+                            background: multiTfMode ? `${TF_COLORS[g.timeframe]}15` : "transparent",
+                            borderRadius: 4,
+                          }}>
+                            {g.timeframe || timeframe}
+                          </span>
+                        </td>
                         <td style={tdStyle}>
                           <div style={{ color: (g.netProfitPct || 0) >= 0 ? "#22c55e" : "#ef4444" }}>
                             {formatMoney(g.netProfit)}
@@ -872,6 +972,18 @@ const chipBtn = {
   color: "#e5e7eb",
   cursor: "pointer",
   fontSize: 12,
+};
+
+const tfChipBtn = {
+  padding: "5px 10px",
+  borderRadius: 6,
+  background: "rgba(255,255,255,0.04)",
+  border: "1px solid rgba(255,255,255,0.1)",
+  color: "#94a3b8",
+  cursor: "pointer",
+  fontSize: 11,
+  fontWeight: 500,
+  transition: "all 0.15s ease",
 };
 
 const chartContainer = {
