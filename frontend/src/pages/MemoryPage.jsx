@@ -34,6 +34,79 @@ export default function MemoryPage() {
   // Use ref to track previous genomes for rank comparison (avoid infinite loop)
   const prevGenomesRef = useRef([]);
 
+  // Load previous rank history from localStorage
+  const getRankHistoryKey = useCallback(() => {
+    return `quant_brain_rank_history_${symbol}_${timeframe}`;
+  }, [symbol, timeframe]);
+
+  // Key for storing "new genomes" list (persists until newer genomes arrive)
+  const getNewGenomesKey = useCallback(() => {
+    return `quant_brain_new_genomes_${symbol}_${timeframe}`;
+  }, [symbol, timeframe]);
+
+  const loadRankHistory = useCallback(() => {
+    try {
+      const key = getRankHistoryKey();
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.warn("Failed to load rank history:", e);
+    }
+    return {};
+  }, [getRankHistoryKey]);
+
+  const saveRankHistory = useCallback((rankMap) => {
+    try {
+      const key = getRankHistoryKey();
+      localStorage.setItem(key, JSON.stringify(rankMap));
+    } catch (e) {
+      console.warn("Failed to save rank history:", e);
+    }
+  }, [getRankHistoryKey]);
+
+  // Load/save "new genomes" list
+  const loadNewGenomesList = useCallback(() => {
+    try {
+      const key = getNewGenomesKey();
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        return new Set(JSON.parse(saved));
+      }
+    } catch (e) {
+      console.warn("Failed to load new genomes list:", e);
+    }
+    return new Set();
+  }, [getNewGenomesKey]);
+
+  const saveNewGenomesList = useCallback((genomeSet) => {
+    try {
+      const key = getNewGenomesKey();
+      localStorage.setItem(key, JSON.stringify([...genomeSet]));
+    } catch (e) {
+      console.warn("Failed to save new genomes list:", e);
+    }
+  }, [getNewGenomesKey]);
+
+  // State to trigger refetch after reset
+  const [resetTrigger, setResetTrigger] = useState(0);
+
+  // Reset all tracking data - marks all current genomes as "NEW"
+  const resetTracking = useCallback(() => {
+    try {
+      // Clear rank history
+      localStorage.removeItem(getRankHistoryKey());
+      // Clear new genomes list
+      localStorage.removeItem(getNewGenomesKey());
+      console.log("[Memory] Reset tracking data - all genomes will show as NEW");
+      // Trigger refetch
+      setResetTrigger((prev) => prev + 1);
+    } catch (e) {
+      console.warn("Failed to reset tracking:", e);
+    }
+  }, [getRankHistoryKey, getNewGenomesKey]);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -52,24 +125,78 @@ export default function MemoryPage() {
         // Sort new genomes by PF to get their new ranks
         const sortedNew = [...newGenomes].sort((a, b) => (b.pf || 0) - (a.pf || 0));
 
-        // Build a map of genome_hash -> previous rank from saved ref
-        const prevRankMap = {};
-        const sortedOld = [...prevGenomesRef.current].sort((a, b) => (b.pf || 0) - (a.pf || 0));
-        sortedOld.forEach((g, idx) => {
-          if (g.genome_hash) {
-            prevRankMap[g.genome_hash] = idx + 1;
+        // Load BASELINE rank history from localStorage
+        // This stores the rank when each genome was FIRST seen
+        // We compare current rank against this baseline to show movement
+        const baselineRankHistory = loadRankHistory();
+
+        // Load persisted "new genomes" list from localStorage
+        // These genomes keep "NEW" badge until newer genomes arrive
+        const persistedNewGenomesKey = `quant_brain_new_genomes_${symbol}_${timeframe}`;
+        let persistedNewGenomes = new Set();
+        try {
+          const savedNewGenomes = localStorage.getItem(persistedNewGenomesKey);
+          if (savedNewGenomes) {
+            persistedNewGenomes = new Set(JSON.parse(savedNewGenomes));
           }
-        });
+        } catch (e) {
+          console.warn("Failed to load new genomes list:", e);
+        }
+
+        console.log(`[Memory] Loaded ${persistedNewGenomes.size} persisted NEW genomes from localStorage`);
+
+        // Find TRULY NEW genomes (not in baseline history at all)
+        const trulyNewGenomeHashes = sortedNew
+          .filter((g) => g.genome_hash && baselineRankHistory[g.genome_hash] === undefined)
+          .map((g) => g.genome_hash);
+        const hasTrulyNewGenomes = trulyNewGenomeHashes.length > 0;
+
+        console.log(`[Memory] Found ${trulyNewGenomeHashes.length} truly new genomes (not in baseline)`);
+
+        // Determine which genomes should show NEW badge
+        let currentNewGenomes;
+
+        if (hasTrulyNewGenomes) {
+          // NEW genomes arrived - update baseline and replace NEW list
+          const updatedBaseline = { ...baselineRankHistory };
+          sortedNew.forEach((g, idx) => {
+            const currentRank = idx + 1;
+            // Only add NEW genomes to baseline, don't update existing
+            if (g.genome_hash && updatedBaseline[g.genome_hash] === undefined) {
+              updatedBaseline[g.genome_hash] = currentRank;
+            }
+          });
+          saveRankHistory(updatedBaseline);
+
+          // Replace "new genomes" list with only the truly new ones
+          // This clears the OLD "new" genomes' NEW badge
+          currentNewGenomes = new Set(trulyNewGenomeHashes);
+          localStorage.setItem(persistedNewGenomesKey, JSON.stringify([...currentNewGenomes]));
+
+          console.log(`[Memory] Saved ${currentNewGenomes.size} new genomes to localStorage, cleared old NEW badges`);
+        } else {
+          // No new genomes - keep existing NEW badges from localStorage
+          currentNewGenomes = persistedNewGenomes;
+          console.log(`[Memory] No new genomes - keeping ${currentNewGenomes.size} existing NEW badges`);
+        }
+
+        // Use updated baseline
+        const finalBaseline = hasTrulyNewGenomes ? loadRankHistory() : baselineRankHistory;
 
         // Add rank info to genomes
+        // A genome is "NEW" if it's in the currentNewGenomes set
+        // NEW genomes can still have rank changes if they have a baseline rank
         const genomesWithRank = sortedNew.map((g, idx) => {
-          const newRank = idx + 1;
-          const prevRank = prevRankMap[g.genome_hash];
+          const currentRank = idx + 1;
+          const baselineRank = finalBaseline[g.genome_hash];
+          const isNew = currentNewGenomes.has(g.genome_hash);
+
           return {
             ...g,
-            currentRank: newRank,
-            previousRank: prevRank || null,
-            isNew: !prevRank,
+            currentRank: currentRank,
+            // Always use baseline rank for comparison (even for NEW genomes)
+            previousRank: baselineRank !== undefined ? baselineRank : null,
+            isNew: isNew,
           };
         });
 
@@ -90,11 +217,11 @@ export default function MemoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [symbol, timeframe]);
+  }, [symbol, timeframe, loadRankHistory, saveRankHistory, loadNewGenomesList, saveNewGenomesList]);
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+  }, [fetchData, resetTrigger]);
 
   // Sort genomes by PF (Profit Factor) - descending
   const sortedGenomes = useMemo(() => {
@@ -169,18 +296,63 @@ export default function MemoryPage() {
     };
   }, [equityData, visibleSeries]);
 
-  // Rank change indicator
-  const getRankChange = (genome) => {
-    if (genome.isNew || genome.previousRank === null) {
-      return { type: "new", display: "NEW", color: "#fbbf24" };
+  // Rank change indicator component
+  const RankChangeIndicator = ({ genome }) => {
+    const hasBaseline = genome.previousRank !== null;
+    const change = hasBaseline ? genome.previousRank - genome.currentRank : 0;
+
+    // NEW genome - show NEW badge + rank change if available
+    if (genome.isNew) {
+      // NEW without baseline - just show NEW
+      if (!hasBaseline || change === 0) {
+        return <span style={newBadgeStyle}>NEW</span>;
+      }
+      // NEW with rank change - show both
+      return (
+        <div style={rankChangeContainer}>
+          <span style={{ ...newBadgeStyle, marginRight: 4 }}>NEW</span>
+          {change > 0 ? (
+            <>
+              <span style={{ ...arrowStyle, color: "#00C853" }}>▲</span>
+              <span style={{ ...changeValueStyle, color: "#00C853" }}>{change}</span>
+            </>
+          ) : (
+            <>
+              <span style={{ ...arrowStyle, color: "#FF5252" }}>▼</span>
+              <span style={{ ...changeValueStyle, color: "#FF5252" }}>{Math.abs(change)}</span>
+            </>
+          )}
+        </div>
+      );
     }
-    const change = genome.previousRank - genome.currentRank;
+
+    // Not NEW, no baseline - show dash
+    if (!hasBaseline) {
+      return <span style={noChangeStyle}>—</span>;
+    }
+
+    // No change
+    if (change === 0) {
+      return <span style={noChangeStyle}>—</span>;
+    }
+
+    // Rank improved (moved UP in leaderboard)
     if (change > 0) {
-      return { type: "up", display: `▲${change}`, color: "#4ade80" };
-    } else if (change < 0) {
-      return { type: "down", display: `▼${Math.abs(change)}`, color: "#f87171" };
+      return (
+        <div style={rankChangeContainer}>
+          <span style={{ ...arrowStyle, color: "#00C853" }}>▲</span>
+          <span style={{ ...changeValueStyle, color: "#00C853" }}>{change}</span>
+        </div>
+      );
     }
-    return { type: "same", display: "-", color: "#6b7280" };
+
+    // Rank dropped (moved DOWN in leaderboard)
+    return (
+      <div style={rankChangeContainer}>
+        <span style={{ ...arrowStyle, color: "#FF5252" }}>▼</span>
+        <span style={{ ...changeValueStyle, color: "#FF5252" }}>{Math.abs(change)}</span>
+      </div>
+    );
   };
 
   const formatPct = (val) => {
@@ -434,7 +606,7 @@ export default function MemoryPage() {
                   <tr style={{ background: "rgba(255,255,255,0.05)" }}>
                     <th style={thStyle}>#</th>
                     <th style={thStyle}>▲▼</th>
-                    <th style={thStyle}>ID</th>
+                    <th style={thStyle}>TF</th>
                     <th style={thStyle}>Total PNL</th>
                     <th style={thStyle}>PF</th>
                     <th style={thStyle}>WR</th>
@@ -446,7 +618,6 @@ export default function MemoryPage() {
                 </thead>
                 <tbody>
                   {sortedGenomes.map((g, idx) => {
-                    const rankChange = getRankChange(g);
                     const isSelected = selectedGenome?.genome_hash === g.genome_hash;
                     const isTop1 = idx === 0;
 
@@ -471,14 +642,10 @@ export default function MemoryPage() {
                           {isTop1 && <span style={{ marginRight: 4 }}>⭐</span>}
                           #{idx + 1}
                         </td>
-                        <td style={{ ...tdStyle, color: rankChange.color, fontWeight: 600 }}>
-                          {rankChange.type === "new" ? (
-                            <span style={newBadge}>NEW</span>
-                          ) : (
-                            rankChange.display
-                          )}
+                        <td style={{ ...tdStyle, textAlign: "center" }}>
+                          <RankChangeIndicator genome={g} />
                         </td>
-                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 11 }}>{g.id}</td>
+                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 11 }}>{g.timeframe || timeframe}</td>
                         <td style={tdStyle}>
                           <div style={{ color: (g.netProfitPct || 0) >= 0 ? "#22c55e" : "#ef4444" }}>
                             {formatMoney(g.netProfit)}
@@ -686,6 +853,17 @@ const refreshBtn = {
   fontWeight: 600,
 };
 
+const resetBtn = {
+  padding: "10px 16px",
+  borderRadius: 8,
+  border: "1px solid rgba(251,191,36,0.3)",
+  background: "rgba(251,191,36,0.1)",
+  color: "#fbbf24",
+  cursor: "pointer",
+  fontWeight: 600,
+  fontSize: 13,
+};
+
 const chipBtn = {
   padding: "6px 12px",
   borderRadius: 999,
@@ -736,15 +914,6 @@ const thStyle = {
 const tdStyle = {
   padding: "10px 8px",
   textAlign: "left",
-};
-
-const newBadge = {
-  background: "linear-gradient(135deg, #fbbf24, #f59e0b)",
-  color: "#000",
-  padding: "2px 6px",
-  borderRadius: 4,
-  fontSize: 10,
-  fontWeight: 700,
 };
 
 const tooltipStyle = {
@@ -809,4 +978,42 @@ const paramBlock = {
   borderRadius: 8,
   padding: 12,
   border: "1px solid rgba(255,255,255,0.05)",
+};
+
+// Rank Change Indicator Styles
+const rankChangeContainer = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 2,
+  minWidth: 28,
+};
+
+const arrowStyle = {
+  fontSize: 14,
+  fontWeight: 700,
+  lineHeight: 1,
+};
+
+const changeValueStyle = {
+  fontSize: 11,
+  fontWeight: 600,
+  lineHeight: 1,
+};
+
+const newBadgeStyle = {
+  background: "linear-gradient(135deg, #fbbf24, #f59e0b)",
+  color: "#000",
+  padding: "3px 8px",
+  borderRadius: 4,
+  fontSize: 10,
+  fontWeight: 700,
+  letterSpacing: "0.5px",
+};
+
+const noChangeStyle = {
+  color: "#64748b",
+  fontSize: 14,
+  fontWeight: 500,
 };

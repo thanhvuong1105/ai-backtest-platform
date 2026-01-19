@@ -60,10 +60,22 @@ async def get_genomes(
     """
     strategy_hash = generate_strategy_hash(strategy_type, ENGINE_VERSION)
 
-    # Try sorted set first, fallback to scan if empty
-    genomes = get_top_genomes_by_score(strategy_hash, symbol, timeframe, limit)
-    if not genomes:
-        genomes = get_genomes_by_scan(strategy_hash, symbol, timeframe, limit)
+    # Use scan to get ALL genomes (sorted set may not have all records)
+    # This ensures we show all stored genomes, not just recent ones
+    genomes = get_genomes_by_scan(strategy_hash, symbol, timeframe, limit)
+
+    # If scan returns fewer than expected, also check sorted set
+    if len(genomes) < limit:
+        sorted_genomes = get_top_genomes_by_score(strategy_hash, symbol, timeframe, limit)
+        # Merge and deduplicate by genome_hash
+        existing_hashes = {g.get("genome_hash") for g in genomes}
+        for g in sorted_genomes:
+            if g.get("genome_hash") not in existing_hashes:
+                genomes.append(g)
+                existing_hashes.add(g.get("genome_hash"))
+        # Re-sort by score
+        genomes.sort(key=lambda x: x.get("results", {}).get("score", 0), reverse=True)
+        genomes = genomes[:limit]
 
     # Format for frontend display
     formatted_genomes = []
@@ -77,6 +89,7 @@ async def get_genomes(
         formatted_genomes.append({
             "id": g.get("genome_hash", "")[:8],
             "genome_hash": g.get("genome_hash", ""),
+            "timeframe": timeframe,  # Add timeframe to each genome
             "score": round(results.get("score", 0), 4),
             "brainScore": round(results.get("score", 0), 4),  # score = brainScore
             "pf": round(results.get("pf", 0), 2),

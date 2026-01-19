@@ -102,7 +102,7 @@ services:
       - INDICATOR_RESULT_CACHE_SIZE=1024
       - REDIS_POOL_SIZE=30
       - DATA_PRELOAD=true
-      - PROGRESS_BATCH_SIZE=75
+      - PROGRESS_BATCH_SIZE=1
       # ═══════════════════════════════════════════════════════
       # GENETIC ALGORITHM - GIỮ NGUYÊN NHƯ CŨ
       # ═══════════════════════════════════════════════════════

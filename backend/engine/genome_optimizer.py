@@ -335,6 +335,7 @@ class GenomeOptimizer:
     - Phased optimization
     - Parallel fitness evaluation
     - Dynamic bounds (auto-expanded from memory)
+    - Cooperative cancellation via cancel_check_fn
     """
 
     def __init__(
@@ -346,7 +347,8 @@ class GenomeOptimizer:
         crossover_rate: float = CROSSOVER_RATE,
         elite_count: int = ELITE_COUNT,
         max_workers: int = 8,
-        param_bounds: Dict = None
+        param_bounds: Dict = None,
+        cancel_check_fn: Callable[[], bool] = None
     ):
         """
         Initialize optimizer.
@@ -360,6 +362,7 @@ class GenomeOptimizer:
             elite_count: Number of elites to preserve
             max_workers: Max parallel workers for fitness evaluation
             param_bounds: Optional custom bounds (auto-expanded from memory)
+            cancel_check_fn: Optional function that returns True if cancelled
         """
         self.fitness_fn = fitness_fn
         self.population_size = population_size
@@ -369,11 +372,18 @@ class GenomeOptimizer:
         self.elite_count = elite_count
         self.max_workers = max_workers
         self.param_bounds = param_bounds  # None means use PARAM_BOUNDS
+        self.cancel_check_fn = cancel_check_fn
 
         # Tracking
         self.generation_history = []
         self.best_genome = None
         self.best_score = float("-inf")
+
+    def _check_cancelled(self) -> bool:
+        """Check if optimization should be cancelled."""
+        if self.cancel_check_fn:
+            return self.cancel_check_fn()
+        return False
 
     def initialize_population(
         self,
@@ -451,6 +461,7 @@ class GenomeOptimizer:
         Parallel fitness evaluation using ThreadPoolExecutor.
 
         Achieves 4-16x speedup on multi-core systems.
+        Supports cooperative cancellation.
         """
         pop_size = len(population)
         workers = min(MAX_FITNESS_WORKERS, pop_size)
@@ -477,6 +488,13 @@ class GenomeOptimizer:
             }
 
             for future in as_completed(futures):
+                # Check cancellation
+                if self._check_cancelled():
+                    logger.info("Parallel evaluation cancelled")
+                    for f in futures:
+                        f.cancel()
+                    break
+
                 try:
                     idx, score = future.result()
                     scores[idx] = score
@@ -498,12 +516,20 @@ class GenomeOptimizer:
     ) -> List[float]:
         """
         Sequential fitness evaluation (fallback for small populations).
+        Supports cooperative cancellation.
         """
         scores = []
         pop_size = len(population)
         logger.info(f"Evaluating {pop_size} genomes sequentially")
 
         for i, genome in enumerate(population):
+            # Check cancellation
+            if self._check_cancelled():
+                logger.info(f"Sequential evaluation cancelled at {i}/{pop_size}")
+                # Fill remaining with -inf
+                scores.extend([float("-inf")] * (pop_size - i))
+                break
+
             try:
                 score = self._safe_fitness(genome)
                 if score is None or (isinstance(score, float) and score != score):
@@ -606,12 +632,22 @@ class GenomeOptimizer:
         Returns:
             (best_genome, best_score, top_genomes)
         """
+        # Check cancellation at start
+        if self._check_cancelled():
+            logger.info("Optimization cancelled before start")
+            return None, 0, []
+
         # Initialize
         population = self.initialize_population(seed_genomes, regime)
 
         logger.info(f"Starting evolution: pop={self.population_size}, gen={self.generations}")
 
         for gen in range(self.generations):
+            # Check cancellation before each generation
+            if self._check_cancelled():
+                logger.info(f"Optimization cancelled at generation {gen}/{self.generations}")
+                break
+
             # Evaluate
             scores = self.evaluate_population(population)
 
@@ -637,6 +673,11 @@ class GenomeOptimizer:
             # Evolve (except last generation)
             if gen < self.generations - 1:
                 population = self.evolve_generation(population, scores)
+
+        # Check cancellation before final evaluation
+        if self._check_cancelled():
+            logger.info("Optimization cancelled before final evaluation")
+            return self.best_genome, self.best_score, [self.best_genome] if self.best_genome else []
 
         # Get top genomes from final population
         final_scores = self.evaluate_population(population)
@@ -677,6 +718,7 @@ class PhasedOptimizer:
     Phase 4: Optimize Mode combinations
 
     Supports dynamic bounds (auto-expanded from memory).
+    Supports cooperative cancellation via cancel_check_fn.
     """
 
     def __init__(
@@ -684,12 +726,20 @@ class PhasedOptimizer:
         fitness_fn: Callable[[Dict], float],
         generations_per_phase: int = 5,
         population_size: int = 30,
-        param_bounds: Dict = None
+        param_bounds: Dict = None,
+        cancel_check_fn: Callable[[], bool] = None
     ):
         self.fitness_fn = fitness_fn
         self.generations_per_phase = generations_per_phase
         self.population_size = population_size
         self.param_bounds = param_bounds  # Auto-expanded bounds from memory
+        self.cancel_check_fn = cancel_check_fn
+
+    def _check_cancelled(self) -> bool:
+        """Check if optimization should be cancelled."""
+        if self.cancel_check_fn:
+            return self.cancel_check_fn()
+        return False
 
     def optimize(
         self,
@@ -703,6 +753,11 @@ class PhasedOptimizer:
         Returns:
             (best_genome, best_score, top_genomes)
         """
+        # Check cancellation at start
+        if self._check_cancelled():
+            logger.info("Phased optimization cancelled before start")
+            return None, 0, []
+
         # Start with base genome
         if seed_genomes and len(seed_genomes) > 0:
             base_genome = copy.deepcopy(seed_genomes[0])
@@ -712,15 +767,20 @@ class PhasedOptimizer:
         all_tested = []
 
         # Phase 1: Entry
+        if self._check_cancelled():
+            logger.info("Phased optimization cancelled before Phase 1")
+            return base_genome, 0, [base_genome]
+
         logger.info("Phase 1: Optimizing Entry genome")
         entry_optimizer = GenomeOptimizer(
             fitness_fn=self.fitness_fn,
             population_size=self.population_size,
             generations=self.generations_per_phase,
-            param_bounds=self.param_bounds  # Pass dynamic bounds
+            param_bounds=self.param_bounds,
+            cancel_check_fn=self.cancel_check_fn  # Pass cancel check
         )
         best_entry, _, top_entry = entry_optimizer.optimize(seed_genomes, regime)
-        all_tested.extend(top_entry)
+        all_tested.extend(top_entry if top_entry else [])
 
         # Lock entry (with fallback check)
         if best_entry and "entry" in best_entry:
@@ -729,16 +789,21 @@ class PhasedOptimizer:
             logger.warning("Phase 1 returned no valid entry genome, using default")
 
         # Phase 2: SL
+        if self._check_cancelled():
+            logger.info("Phased optimization cancelled before Phase 2")
+            return base_genome, 0, all_tested or [base_genome]
+
         logger.info("Phase 2: Optimizing SL genome")
         sl_seeds = [self._vary_sl(base_genome) for _ in range(10)]
         sl_optimizer = GenomeOptimizer(
             fitness_fn=self.fitness_fn,
             population_size=self.population_size,
             generations=self.generations_per_phase,
-            param_bounds=self.param_bounds  # Pass dynamic bounds
+            param_bounds=self.param_bounds,
+            cancel_check_fn=self.cancel_check_fn  # Pass cancel check
         )
         best_sl, _, top_sl = sl_optimizer.optimize(sl_seeds, regime)
-        all_tested.extend(top_sl)
+        all_tested.extend(top_sl if top_sl else [])
 
         # Lock SL (with fallback check)
         if best_sl and "sl" in best_sl:
@@ -747,16 +812,21 @@ class PhasedOptimizer:
             logger.warning("Phase 2 returned no valid SL genome, using default")
 
         # Phase 3: TP
+        if self._check_cancelled():
+            logger.info("Phased optimization cancelled before Phase 3")
+            return base_genome, 0, all_tested or [base_genome]
+
         logger.info("Phase 3: Optimizing TP genome")
         tp_seeds = [self._vary_tp(base_genome) for _ in range(10)]
         tp_optimizer = GenomeOptimizer(
             fitness_fn=self.fitness_fn,
             population_size=self.population_size,
             generations=self.generations_per_phase,
-            param_bounds=self.param_bounds  # Pass dynamic bounds
+            param_bounds=self.param_bounds,
+            cancel_check_fn=self.cancel_check_fn  # Pass cancel check
         )
         best_tp, _, top_tp = tp_optimizer.optimize(tp_seeds, regime)
-        all_tested.extend(top_tp)
+        all_tested.extend(top_tp if top_tp else [])
 
         # Lock TP (with fallback check)
         if best_tp:
@@ -768,13 +838,27 @@ class PhasedOptimizer:
             logger.warning("Phase 3 returned no valid TP genome, using default")
 
         # Phase 4: Mode
+        if self._check_cancelled():
+            logger.info("Phased optimization cancelled before Phase 4")
+            return base_genome, 0, all_tested or [base_genome]
+
         logger.info("Phase 4: Optimizing Mode")
         mode_variants = self._generate_mode_variants(base_genome)
-        mode_scores = [self.fitness_fn(g) for g in mode_variants]
+        mode_scores = []
+        for variant in mode_variants:
+            if self._check_cancelled():
+                logger.info("Phased optimization cancelled during Phase 4")
+                return base_genome, 0, all_tested or [base_genome]
+            mode_scores.append(self.fitness_fn(variant))
+
         best_mode_idx = max(range(len(mode_scores)), key=lambda i: mode_scores[i])
         base_genome["mode"] = mode_variants[best_mode_idx]["mode"]
 
         # Final score
+        if self._check_cancelled():
+            logger.info("Phased optimization cancelled before final score")
+            return base_genome, 0, all_tested or [base_genome]
+
         final_score = self.fitness_fn(base_genome)
 
         # Sort all tested by score

@@ -139,6 +139,59 @@ MAX_TRADES_RETURN = 1200
 AUTO_TUNING_ENABLED = os.getenv("AUTO_TUNING_ENABLED", "true").lower() == "true"
 AUTO_TUNING_INTERVAL = int(os.getenv("AUTO_TUNING_INTERVAL", 10))  # Check every N genomes
 
+# Cancel check interval
+CANCEL_CHECK_INTERVAL = 0.5  # Check every 0.5 seconds
+
+
+# ═══════════════════════════════════════════════════════
+# CANCELLATION TOKEN
+# ═══════════════════════════════════════════════════════
+
+class CancellationToken:
+    """
+    Thread-safe cancellation token for cooperative cancellation.
+
+    Usage:
+    - Create token at start of job
+    - Pass to all long-running operations
+    - Call check_cancelled() frequently to raise if cancelled
+    """
+
+    def __init__(self, job_id: str = ""):
+        self.job_id = job_id
+        self._cancelled = False
+        self._last_check_time = 0
+        self._check_fn = None
+
+    def set_check_fn(self, fn):
+        """Set external function to check cancel flag (e.g., Redis)."""
+        self._check_fn = fn
+
+    def cancel(self):
+        """Mark as cancelled."""
+        self._cancelled = True
+
+    def is_cancelled(self) -> bool:
+        """Check if cancelled (with throttled external check)."""
+        if self._cancelled:
+            return True
+
+        # Throttled external check
+        now = time.time()
+        if self._check_fn and (now - self._last_check_time) >= CANCEL_CHECK_INTERVAL:
+            self._last_check_time = now
+            if self._check_fn():
+                self._cancelled = True
+                return True
+
+        return False
+
+    def check_cancelled(self):
+        """Raise InterruptedError if cancelled."""
+        if self.is_cancelled():
+            logger.info(f"[{self.job_id}] Job cancelled by user")
+            raise InterruptedError("Job canceled by user")
+
 
 # ═══════════════════════════════════════════════════════
 # PARAM BOUNDS HELPER
@@ -558,10 +611,26 @@ def quant_brain_recommend(
 
     logger.info(f"Quant Brain starting in {mode.upper()} mode")
 
-    # Progress helper
+    # ═══════════════════════════════════════════════════════════════
+    # CANCELLATION TOKEN SETUP
+    # ═══════════════════════════════════════════════════════════════
+    cancel_token = CancellationToken(job_id)
+
+    # Try to get check_cancel_flag from progress_store if available
+    try:
+        from app.services.progress_store import check_cancel_flag
+        cancel_token.set_check_fn(lambda: check_cancel_flag(job_id))
+        logger.info(f"[{job_id}] Cancellation token initialized with Redis check")
+    except ImportError:
+        logger.warning(f"[{job_id}] progress_store not available, cancellation via callback only")
+
+    # Progress helper with cancel check
     last_emit_time = [0]
 
     def emit_progress(progress: int, total: int, extra: Dict = None, force: bool = False):
+        # Check cancellation on every progress emit
+        cancel_token.check_cancelled()
+
         now = time.time()
         if not force and now - last_emit_time[0] < PROGRESS_INTERVAL and progress != total:
             return
@@ -570,24 +639,25 @@ def quant_brain_recommend(
         if progress_cb:
             progress_cb(job_id, progress, total, "running", extra or {})
 
-    emit_progress(0, 100, {"phase": "initializing", "mode": mode}, force=True)
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE 1: INITIALIZATION (0% - 25%)
+    # Steps: Auto-tuning, Data preload, Strategy hash, Market regime,
+    #        Query memory, Expand bounds, Validate coherence
+    # ═══════════════════════════════════════════════════════════════
+    emit_progress(0, 100, {"phase": "initializing", "mode": mode, "phase_name": "Phase 1: Khởi tạo"}, force=True)
 
-    # ═══════════════════════════════════════════════════════
-    # 0. AUTO-TUNING INITIALIZATION
-    # ═══════════════════════════════════════════════════════
+    # 0. AUTO-TUNING INITIALIZATION (0-3%)
     tuning_context = None
     tuning_summary = {}
 
-    emit_progress(1, 100, {"phase": "detecting_resources"}, force=True)
+    emit_progress(1, 100, {"phase": "detecting_resources", "phase_name": "Phase 1: Khởi tạo"}, force=True)
 
     if AUTO_TUNING_ENABLED:
         try:
-            # Detect system resources and log
-            emit_progress(2, 100, {"phase": "detecting_system"}, force=True)
+            emit_progress(2, 100, {"phase": "detecting_system", "phase_name": "Phase 1: Khởi tạo"}, force=True)
             resources = detect_system_resources()
 
-            emit_progress(3, 100, {"phase": "configuring_tuner"}, force=True)
-            # Initialize auto-tuning context
+            emit_progress(3, 100, {"phase": "configuring_tuner", "phase_name": "Phase 1: Khởi tạo"}, force=True)
             tuning_context = AutoTuningContext(
                 enabled=True,
                 initial_params={
@@ -598,58 +668,39 @@ def quant_brain_recommend(
                 }
             )
             tuning_context.__enter__()
-
-            emit_progress(4, 100, {
-                "phase": "auto_tuning_ready",
-                "effective_cpus": resources.effective_cpus,
-                "effective_memory_gb": round(resources.effective_memory_gb, 1),
-                "is_docker": resources.is_docker,
-            }, force=True)
             logger.info(f"Auto-tuning initialized: {resources.effective_cpus} CPUs, {resources.effective_memory_gb:.1f}GB RAM")
         except Exception as e:
             logger.warning(f"Failed to initialize auto-tuning: {e}")
             tuning_context = None
-            emit_progress(4, 100, {"phase": "tuning_skipped"}, force=True)
-    else:
-        emit_progress(4, 100, {"phase": "tuning_disabled"}, force=True)
 
-    # ═══════════════════════════════════════════════════════
-    # 0.5. DATA PRELOAD (ULTRA mode optimization)
-    # ═══════════════════════════════════════════════════════
-    emit_progress(5, 100, {"phase": "checking_preload"}, force=True)
+    emit_progress(4, 100, {"phase": "tuning_ready", "phase_name": "Phase 1: Khởi tạo"}, force=True)
+
+    # 0.5. DATA PRELOAD (4-6%)
+    emit_progress(5, 100, {"phase": "checking_preload", "phase_name": "Phase 1: Khởi tạo"}, force=True)
     if mode == MODE_ULTRA and DATA_PRELOAD:
-        # Preload all data into memory for maximum speed
         preloaded_count = preload_all_data()
         if preloaded_count > 0:
             logger.info(f"ULTRA mode: Preloaded {preloaded_count} datasets for max speed")
-        emit_progress(6, 100, {"phase": "data_preloaded", "count": preloaded_count}, force=True)
-    else:
-        emit_progress(6, 100, {"phase": "preload_skipped"}, force=True)
+    emit_progress(6, 100, {"phase": "preload_done", "phase_name": "Phase 1: Khởi tạo"}, force=True)
 
-    # ═══════════════════════════════════════════════════════
-    # 1. GENERATE STRATEGY HASH
-    # ═══════════════════════════════════════════════════════
-    emit_progress(7, 100, {"phase": "generating_hash"}, force=True)
+    # 1. GENERATE STRATEGY HASH (7-9%)
+    emit_progress(7, 100, {"phase": "generating_hash", "phase_name": "Phase 1: Khởi tạo"}, force=True)
     strategy_type = cfg.get("strategy", {}).get("type", "rf_st_rsi")
     strategy_hash = generate_strategy_hash(strategy_type, ENGINE_VERSION)
 
-    emit_progress(8, 100, {"phase": "registering_strategy"}, force=True)
-    # Register strategy
+    emit_progress(8, 100, {"phase": "registering_strategy", "phase_name": "Phase 1: Khởi tạo"}, force=True)
     register_strategy(strategy_hash, strategy_type, ENGINE_VERSION)
 
-    emit_progress(9, 100, {"phase": "strategy_hash", "hash": strategy_hash}, force=True)
+    emit_progress(9, 100, {"phase": "strategy_hash", "hash": strategy_hash, "phase_name": "Phase 1: Khởi tạo"}, force=True)
 
-    # ═══════════════════════════════════════════════════════
-    # 2. CLASSIFY MARKET REGIME
-    # ═══════════════════════════════════════════════════════
-    emit_progress(10, 100, {"phase": "loading_market_data"}, force=True)
+    # 2. CLASSIFY MARKET REGIME (10-13%)
+    emit_progress(10, 100, {"phase": "loading_market_data", "phase_name": "Phase 1: Khởi tạo"}, force=True)
     symbols = cfg.get("symbols", ["BTCUSDT"])
     timeframes = cfg.get("timeframes", ["1h"])
     symbol = symbols[0] if symbols else "BTCUSDT"
     timeframe = timeframes[0] if timeframes else "1h"
 
-    emit_progress(11, 100, {"phase": "classifying_regime"}, force=True)
-    # Load data for regime classification (use preloaded if available)
+    emit_progress(11, 100, {"phase": "classifying_regime", "phase_name": "Phase 1: Khởi tạo"}, force=True)
     try:
         df = get_preloaded(symbol, timeframe)
         if df is None:
@@ -662,26 +713,22 @@ def quant_brain_recommend(
         regime = MarketRegime.RANGING
         market_profile = {}
 
-    emit_progress(12, 100, {"phase": "regime_classified", "regime": regime.value}, force=True)
+    emit_progress(13, 100, {"phase": "regime_classified", "regime": regime.value, "phase_name": "Phase 1: Khởi tạo"}, force=True)
 
-    # ═══════════════════════════════════════════════════════
-    # 3. QUERY PARAMMEMORY FOR SEEDS
-    # ═══════════════════════════════════════════════════════
-    emit_progress(13, 100, {"phase": "querying_memory"}, force=True)
+    # 3. QUERY PARAMMEMORY FOR SEEDS (14-17%)
+    emit_progress(14, 100, {"phase": "querying_memory", "phase_name": "Phase 1: Khởi tạo"}, force=True)
     seed_genomes = []
-    memory_records = []  # Keep full records for bounds expansion
+    memory_records = []
 
     try:
-        emit_progress(14, 100, {"phase": "loading_similar_genomes"}, force=True)
-        # Get similar genomes from memory
+        emit_progress(15, 100, {"phase": "loading_similar_genomes", "phase_name": "Phase 1: Khởi tạo"}, force=True)
         similar = query_similar_genomes(
             strategy_hash, symbol, timeframe, market_profile, top_n=20
         )
         memory_records.extend(similar)
         seed_genomes.extend([g["genome"] for g in similar if "genome" in g])
 
-        emit_progress(15, 100, {"phase": "loading_top_performers"}, force=True)
-        # Get top performers across all symbols/timeframes
+        emit_progress(16, 100, {"phase": "loading_top_performers", "phase_name": "Phase 1: Khởi tạo"}, force=True)
         top_all = get_all_top_genomes(strategy_hash, symbols, timeframes, limit_per_combo=10)
         memory_records.extend(top_all)
         seed_genomes.extend([g["genome"] for g in top_all if "genome" in g])
@@ -690,10 +737,10 @@ def quant_brain_recommend(
     except Exception as e:
         logger.warning(f"Failed to load from ParamMemory: {e}")
 
-    # ═══════════════════════════════════════════════════════
-    # 3.5. AUTO-EXPAND BOUNDS FROM MEMORY
-    # ═══════════════════════════════════════════════════════
-    emit_progress(16, 100, {"phase": "expanding_bounds"}, force=True)
+    emit_progress(17, 100, {"phase": "memory_loaded", "count": len(seed_genomes), "phase_name": "Phase 1: Khởi tạo"}, force=True)
+
+    # 3.5. AUTO-EXPAND BOUNDS FROM MEMORY (18-20%)
+    emit_progress(18, 100, {"phase": "expanding_bounds", "phase_name": "Phase 1: Khởi tạo"}, force=True)
     # Get effective bounds - auto-expands if memory has good genomes outside user range
     effective_bounds = get_effective_bounds(cfg, memory_records)
 
@@ -717,21 +764,20 @@ def quant_brain_recommend(
     if bounds_expanded:
         logger.info(f"Bounds auto-expanded from memory: {expansion_details}")
 
-    emit_progress(17, 100, {"phase": "sampling_regime_params"}, force=True)
+    emit_progress(19, 100, {"phase": "sampling_regime_params", "phase_name": "Phase 1: Khởi tạo"}, force=True)
     # Add regime-aware random samples
     regime_samples = sample_params_for_regime(regime, n_samples=10)
     seed_genomes.extend(regime_samples)
 
-    emit_progress(18, 100, {
+    emit_progress(20, 100, {
         "phase": "seeds_loaded",
         "count": len(seed_genomes),
-        "bounds_expanded": bounds_expanded
+        "bounds_expanded": bounds_expanded,
+        "phase_name": "Phase 1: Khởi tạo"
     }, force=True)
 
-    # ═══════════════════════════════════════════════════════
-    # 4. VALIDATE COHERENCE (mode-dependent)
-    # ═══════════════════════════════════════════════════════
-    emit_progress(19, 100, {"phase": "validating_coherence"}, force=True)
+    # 4. VALIDATE COHERENCE (21-24%)
+    emit_progress(21, 100, {"phase": "validating_coherence", "phase_name": "Phase 1: Khởi tạo"}, force=True)
     if mode == MODE_ULTRA:
         # ULTRA: Minimal filter - only check TP_mult >= SL_mult
         valid_seeds = []
@@ -749,15 +795,22 @@ def quant_brain_recommend(
         # FAST/BRAIN: Full coherence validation
         valid_seeds, invalid_seeds = validate_genome_batch(seed_genomes)
 
-    emit_progress(20, 100, {
+    emit_progress(23, 100, {
         "phase": "coherence_validated",
         "valid": len(valid_seeds),
-        "invalid": len(invalid_seeds)
+        "invalid": len(invalid_seeds),
+        "phase_name": "Phase 1: Khởi tạo"
     }, force=True)
 
-    # ═══════════════════════════════════════════════════════
-    # 5. CREATE FITNESS FUNCTION (mode-dependent)
-    # ═══════════════════════════════════════════════════════
+    # End of Phase 1
+    emit_progress(25, 100, {"phase": "phase1_complete", "phase_name": "Phase 1: Khởi tạo"}, force=True)
+
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE 2: GENOME OPTIMIZATION (25% - 50%)
+    # Steps: Create fitness function, Run evolutionary optimizer
+    # ═══════════════════════════════════════════════════════════════
+    emit_progress(26, 100, {"phase": "creating_fitness", "phase_name": "Phase 2: Tối ưu hóa"}, force=True)
+
     def fitness_fn(genome: Dict) -> float:
         """Fitness function for genome evaluation."""
         try:
@@ -777,14 +830,11 @@ def quant_brain_recommend(
             logger.warning(f"Fitness backtest failed: {e}\n{traceback.format_exc()}")
             return float("-inf")
 
-    # ═══════════════════════════════════════════════════════
-    # 6. RUN GENOME OPTIMIZATION (ADAPTIVE PARAMS)
-    # ═══════════════════════════════════════════════════════
-    emit_progress(21, 100, {"phase": "preparing_optimizer"}, force=True)
+    emit_progress(27, 100, {"phase": "preparing_optimizer", "phase_name": "Phase 2: Tối ưu hóa Genome"}, force=True)
 
     num_combos = len(symbols) * len(timeframes)
 
-    emit_progress(22, 100, {"phase": "calculating_params"}, force=True)
+    emit_progress(28, 100, {"phase": "calculating_params", "phase_name": "Phase 2: Tối ưu hóa Genome"}, force=True)
     if mode == MODE_ULTRA:
         # ULTRA MODE: Maximum speed for Apple Silicon
         # No phased optimization - continuous loop
@@ -818,24 +868,27 @@ def quant_brain_recommend(
         f"top_genomes={top_genome_limit}"
     )
 
-    emit_progress(23, 100, {"phase": "creating_optimizer"}, force=True)
+    emit_progress(29, 100, {"phase": "creating_optimizer", "phase_name": "Phase 2: Tối ưu hóa Genome"}, force=True)
     optimizer = PhasedOptimizer(
         fitness_fn=fitness_fn,
         generations_per_phase=generations_per_phase,
         population_size=population_size,
-        param_bounds=effective_bounds  # Pass expanded bounds
+        param_bounds=effective_bounds,  # Pass expanded bounds
+        cancel_check_fn=cancel_token.is_cancelled  # Pass cancel check function
     )
 
-    emit_progress(24, 100, {"phase": "starting_evolution"}, force=True)
+    emit_progress(30, 100, {"phase": "starting_evolution", "phase_name": "Phase 2: Tối ưu hóa Genome"}, force=True)
 
     def opt_progress(gen, total_gen, best_score):
-        # Optimization phase: 25% - 65% (40% total)
-        progress = 25 + int(gen / total_gen * 40)
+        # Phase 2: Optimization (25% - 50%) -> maps gen/total_gen to 30-49%
+        # gen starts at 1, total_gen is max generations
+        progress = 30 + int((gen / total_gen) * 19)  # 30 to 49
         emit_progress(progress, 100, {
             "phase": "optimizing",
             "generation": gen,
             "total_generations": total_gen,
-            "best_score": best_score
+            "best_score": best_score,
+            "phase_name": "Phase 2: Tối ưu hóa Genome"
         }, force=True)
 
     best_genome, best_score, top_genomes = optimizer.optimize(
@@ -844,13 +897,15 @@ def quant_brain_recommend(
         progress_cb=opt_progress
     )
 
-    emit_progress(66, 100, {"phase": "optimization_complete", "best_score": best_score}, force=True)
+    # End of Phase 2
+    emit_progress(50, 100, {"phase": "phase2_complete", "best_score": best_score, "phase_name": "Phase 2: Tối ưu hóa Genome"}, force=True)
 
-    # ═══════════════════════════════════════════════════════
-    # 7. BACKTEST TOP GENOMES (PARALLEL) - Limited for speed
-    # ═══════════════════════════════════════════════════════
-    emit_progress(67, 100, {"phase": "preparing_backtest"}, force=True)
-    emit_progress(68, 100, {"phase": "backtesting_top"}, force=True)
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE 3: BACKTEST TOP GENOMES (50% - 75%)
+    # Steps: Parallel backtest of top genomes across symbols/timeframes
+    # ═══════════════════════════════════════════════════════════════
+    emit_progress(51, 100, {"phase": "preparing_backtest", "phase_name": "Phase 3: Backtest"}, force=True)
+    emit_progress(52, 100, {"phase": "backtesting_top", "phase_name": "Phase 3: Backtest"}, force=True)
 
     # Limit top genomes for faster execution
     limited_genomes = top_genomes[:top_genome_limit]
@@ -877,8 +932,15 @@ def quant_brain_recommend(
 
     with ThreadPoolExecutor(max_workers=effective_workers) as executor:
         futures = []
+        cancelled = False
 
         for genome in limited_genomes:
+            # Check cancel before submitting more work
+            if cancel_token.is_cancelled():
+                cancelled = True
+                logger.info(f"[{job_id}] Backtest cancelled before completion")
+                break
+
             for sym in symbols:
                 for tf in timeframes:
                     future = executor.submit(
@@ -887,8 +949,18 @@ def quant_brain_recommend(
                     futures.append(future)
 
         for future in as_completed(futures):
+            # Check cancel on each completion
+            if cancel_token.is_cancelled():
+                cancelled = True
+                # Cancel remaining futures
+                for f in futures:
+                    f.cancel()
+                logger.info(f"[{job_id}] Backtest cancelled, stopping iteration")
+                break
+
             completed += 1
-            progress = 70 + int(completed / total_backtest * 15)
+            # Phase 3: Backtest (50% - 75%) -> maps completed/total to 53-74%
+            progress = 53 + int((completed / total_backtest) * 21)  # 53 to 74
 
             # Auto-tuning check every N completions
             if tuning_context and completed % AUTO_TUNING_INTERVAL == 0:
@@ -901,7 +973,8 @@ def quant_brain_recommend(
             emit_progress(progress, 100, {
                 "phase": "backtesting",
                 "completed": completed,
-                "total": total_backtest
+                "total": total_backtest,
+                "phase_name": "Phase 3: Backtest"
             }, force=True)
 
             try:
@@ -914,20 +987,27 @@ def quant_brain_recommend(
             except Exception as e:
                 logger.debug(f"Backtest failed: {e}")
 
-    emit_progress(85, 100, {"phase": "backtesting_complete", "results": len(results)}, force=True)
+    # End of Phase 3
+    emit_progress(75, 100, {"phase": "phase3_complete", "results": len(results), "phase_name": "Phase 3: Backtest"}, force=True)
 
-    # ═══════════════════════════════════════════════════════
-    # 8. ROBUSTNESS FILTER (BRAIN_MODE only)
-    # ═══════════════════════════════════════════════════════
-    emit_progress(86, 100, {"phase": "preparing_robustness"}, force=True)
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE 4: ROBUSTNESS + STORE MEMORY (75% - 100%)
+    # Steps: Robustness filter, Rank results, Store to memory, Build response
+    # ═══════════════════════════════════════════════════════════════
+    emit_progress(76, 100, {"phase": "preparing_robustness", "phase_name": "Phase 4: Lưu kết quả"}, force=True)
     robust_results = []
     fragile_results = []
 
     if mode == MODE_BRAIN:
         # BRAIN MODE: Run full robustness testing
-        emit_progress(87, 100, {"phase": "robustness_testing"}, force=True)
+        emit_progress(77, 100, {"phase": "robustness_testing", "phase_name": "Phase 4: Lưu kết quả"}, force=True)
 
         for idx, result in enumerate(results):
+            # Check cancel before each robustness test
+            if cancel_token.is_cancelled():
+                logger.info(f"[{job_id}] Robustness testing cancelled at genome {idx}/{len(results)}")
+                break
+
             genome = result.get("genome", {})
             base_score = result.get("summary", {}).get("brainScore", 0)
 
@@ -952,16 +1032,17 @@ def quant_brain_recommend(
                 result["robustness_score"] = 0
                 fragile_results.append(result)
 
-        emit_progress(90, 100, {
+        emit_progress(80, 100, {
             "phase": "robustness_complete",
             "robust": len(robust_results),
-            "fragile": len(fragile_results)
+            "fragile": len(fragile_results),
+            "phase_name": "Phase 4: Lưu kết quả"
         }, force=True)
 
         logger.info(f"Robustness filter: {len(robust_results)} robust, {len(fragile_results)} fragile")
     else:
         # ULTRA/FAST MODE: Skip robustness, mark all as passed
-        emit_progress(88, 100, {"phase": "skipping_robustness"}, force=True)
+        emit_progress(78, 100, {"phase": "skipping_robustness", "phase_name": "Phase 4: Lưu kết quả"}, force=True)
 
         for result in results:
             result["robustness_passed"] = True
@@ -969,16 +1050,17 @@ def quant_brain_recommend(
 
         robust_results = results
 
-        emit_progress(90, 100, {
+        emit_progress(80, 100, {
             "phase": "robustness_skipped",
             "robust": len(robust_results),
-            "fragile": 0
+            "fragile": 0,
+            "phase_name": "Phase 4: Lưu kết quả"
         }, force=True)
 
     # ═══════════════════════════════════════════════════════
     # 9. SORT AND RANK (mode-dependent)
     # ═══════════════════════════════════════════════════════
-    emit_progress(91, 100, {"phase": "ranking_results"}, force=True)
+    emit_progress(81, 100, {"phase": "ranking_results", "phase_name": "Phase 4: Lưu kết quả"}, force=True)
     # Prefer robust results, fallback to all results
     final_results = robust_results if robust_results else results
 
@@ -1063,22 +1145,23 @@ def quant_brain_recommend(
     range_to = cfg.get("range", {}).get("to", "")
     range_months = calculate_range_months(range_from, range_to)
 
-    emit_progress(92, 100, {"phase": "checking_memory_save"}, force=True)
+    emit_progress(82, 100, {"phase": "checking_memory_save", "phase_name": "Phase 4: Lưu kết quả"}, force=True)
 
     if mode == MODE_BRAIN:
         # Check if range is >= 11 months before saving to Memory
         if range_months < MIN_RANGE_MONTHS:
-            emit_progress(93, 100, {
+            emit_progress(85, 100, {
                 "phase": "skipping_memory_short_range",
                 "range_months": round(range_months, 1),
-                "min_required": MIN_RANGE_MONTHS
+                "min_required": MIN_RANGE_MONTHS,
+                "phase_name": "Phase 4: Lưu kết quả"
             }, force=True)
             logger.info(
                 f"BRAIN mode: Skipping Memory write - Range {range_months:.1f} months < {MIN_RANGE_MONTHS} months required"
             )
         else:
             # BRAIN MODE: Write TOP 5 genomes based on PNL + PF
-            emit_progress(93, 100, {"phase": "storing_memory"}, force=True)
+            emit_progress(83, 100, {"phase": "storing_memory", "phase_name": "Phase 4: Lưu kết quả"}, force=True)
 
             # Sort by PNL (Net Profit) - descending
             sorted_by_pnl = sorted(
@@ -1174,20 +1257,20 @@ def quant_brain_recommend(
                 except Exception as e:
                     logger.debug(f"Failed to store genome: {e}")
 
-            emit_progress(94, 100, {"phase": "memory_stored", "count": stored_count}, force=True)
+            emit_progress(90, 100, {"phase": "memory_stored", "count": stored_count, "phase_name": "Phase 4: Lưu kết quả"}, force=True)
             logger.info(f"Stored {stored_count} robust genomes to ParamMemory")
     else:
         # ULTRA/FAST MODE: Skip memory write
-        emit_progress(93, 100, {"phase": "skipping_memory_write"}, force=True)
+        emit_progress(85, 100, {"phase": "skipping_memory_write", "phase_name": "Phase 4: Lưu kết quả"}, force=True)
         logger.info(f"{mode.upper()} mode: Skipping ParamMemory write")
 
     # ═══════════════════════════════════════════════════════
     # 11. BUILD RESPONSE
     # ═══════════════════════════════════════════════════════
-    emit_progress(95, 100, {"phase": "building_response"}, force=True)
+    emit_progress(91, 100, {"phase": "building_response", "phase_name": "Phase 4: Lưu kết quả"}, force=True)
     elapsed = time.time() - start_time
 
-    emit_progress(96, 100, {"phase": "cleanup_tuning"}, force=True)
+    emit_progress(93, 100, {"phase": "cleanup_tuning", "phase_name": "Phase 4: Lưu kết quả"}, force=True)
     # Cleanup auto-tuning and get summary
     if tuning_context:
         try:
@@ -1197,10 +1280,10 @@ def quant_brain_recommend(
         except Exception as e:
             logger.warning(f"Failed to cleanup auto-tuning: {e}")
 
-    emit_progress(97, 100, {"phase": "preparing_stats"}, force=True)
-    emit_progress(98, 100, {"phase": "finalizing"}, force=True)
-    emit_progress(99, 100, {"phase": "almost_done"}, force=True)
-    emit_progress(100, 100, {"phase": "complete", "mode": mode}, force=True)
+    emit_progress(95, 100, {"phase": "preparing_stats", "phase_name": "Phase 4: Lưu kết quả"}, force=True)
+    emit_progress(97, 100, {"phase": "finalizing", "phase_name": "Phase 4: Lưu kết quả"}, force=True)
+    emit_progress(99, 100, {"phase": "almost_done", "phase_name": "Phase 4: Lưu kết quả"}, force=True)
+    emit_progress(100, 100, {"phase": "complete", "mode": mode, "phase_name": "Phase 4: Hoàn thành"}, force=True)
 
     # Memory stats
     try:
