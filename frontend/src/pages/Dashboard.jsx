@@ -1764,7 +1764,8 @@ export default function Dashboard() {
                     initialEquity={
                       tradesBot?.summary?.initialEquity ||
                       selectedBot?.summary?.initialEquity ||
-                      initialCapital
+                      currentInputs.properties?.initialCapital ||
+                      1000000
                     }
                     selectedIndex={selectedTradeIndex}
                     onSelectTrade={(trade, idx) => {
