@@ -6,15 +6,13 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
-    proxy: {
-      // Proxy API requests to backend during development
-      '/api': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
-      }
-    }
+    host: '0.0.0.0', // Allow external access on EC2
+    // No proxy - frontend calls backend directly with full URL
   },
   // Environment variable prefix
-  envPrefix: 'VITE_'
+  envPrefix: 'VITE_',
+  // Force cache busting in development
+  optimizeDeps: {
+    force: true
+  }
 })
