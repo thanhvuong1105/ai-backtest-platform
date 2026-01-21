@@ -49,6 +49,9 @@ export default function MemoryPage() {
   const [overlayLimit, setOverlayLimit] = useState("5");
   const [visibleSeries, setVisibleSeries] = useState({});
 
+  // Selection state for combine feature
+  const [selectedGenomeIds, setSelectedGenomeIds] = useState(new Set());
+
   // Filters
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframe, setTimeframe] = useState("30m");
@@ -302,6 +305,53 @@ export default function MemoryPage() {
 
     return arr.map((g, idx) => ({ ...g, displayRank: idx + 1 }));
   }, [genomes, sortBy, sortDir]);
+
+  // Selection handlers
+  const toggleGenomeSelection = useCallback((genomeHash) => {
+    setSelectedGenomeIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(genomeHash)) {
+        newSet.delete(genomeHash);
+      } else {
+        newSet.add(genomeHash);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const selectAllGenomes = useCallback(() => {
+    const allHashes = sortedGenomes.map(g => g.genome_hash).filter(Boolean);
+    setSelectedGenomeIds(new Set(allHashes));
+  }, [sortedGenomes]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedGenomeIds(new Set());
+  }, []);
+
+  const isAllSelected = useMemo(() => {
+    const validGenomes = sortedGenomes.filter(g => g.genome_hash);
+    return validGenomes.length > 0 && selectedGenomeIds.size === validGenomes.length;
+  }, [sortedGenomes, selectedGenomeIds]);
+
+  const isSomeSelected = useMemo(() => {
+    return selectedGenomeIds.size > 0 && !isAllSelected;
+  }, [selectedGenomeIds, isAllSelected]);
+
+  // Get selected genomes for combine
+  const selectedGenomesForCombine = useMemo(() => {
+    return sortedGenomes.filter(g => selectedGenomeIds.has(g.genome_hash));
+  }, [sortedGenomes, selectedGenomeIds]);
+
+  // Handle combine selected genomes
+  const handleCombineSelected = useCallback(() => {
+    if (selectedGenomesForCombine.length < 2) {
+      alert("Cần chọn ít nhất 2 genomes để combine!");
+      return;
+    }
+    // TODO: Call combine API here
+    console.log("Combining genomes:", selectedGenomesForCombine.map(g => g.genome_hash));
+    alert(`Combine ${selectedGenomesForCombine.length} genomes (chức năng đang phát triển)`);
+  }, [selectedGenomesForCombine]);
 
   // Filter genomes for chart based on overlay limit
   const chartGenomes = useMemo(() => {
@@ -739,11 +789,67 @@ export default function MemoryPage() {
               </div>
             </div>
 
+            {/* Selection Action Bar */}
+            {selectedGenomeIds.size > 0 && (
+              <div style={selectionBar}>
+                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                  <span style={{ fontWeight: 600, color: "#22c55e" }}>
+                    Selected: {selectedGenomeIds.size}
+                  </span>
+                  <button
+                    onClick={handleCombineSelected}
+                    disabled={selectedGenomeIds.size < 2}
+                    style={{
+                      ...combineBtn,
+                      opacity: selectedGenomeIds.size < 2 ? 0.5 : 1,
+                      cursor: selectedGenomeIds.size < 2 ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    🧬 Combine Selected
+                  </button>
+                  <button onClick={clearSelection} style={clearBtn}>
+                    ✕ Clear
+                  </button>
+                </div>
+                <span style={{ fontSize: 11, opacity: 0.6 }}>
+                  {selectedGenomeIds.size < 2 ? "Chọn ít nhất 2 genomes để combine" : "Sẵn sàng combine"}
+                </span>
+              </div>
+            )}
+
             {/* Table */}
             <div style={tableContainerFull}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr style={{ background: "rgba(255,255,255,0.05)" }}>
+                    {/* Checkbox column */}
+                    <th style={{ ...thStyle, width: 40, textAlign: "center" }}>
+                      <label style={checkboxLabel}>
+                        <input
+                          type="checkbox"
+                          checked={isAllSelected}
+                          ref={el => {
+                            if (el) el.indeterminate = isSomeSelected;
+                          }}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              selectAllGenomes();
+                            } else {
+                              clearSelection();
+                            }
+                          }}
+                          style={checkboxInput}
+                        />
+                        <span style={{
+                          ...checkboxCustom,
+                          background: isAllSelected ? "#22c55e" : isSomeSelected ? "#3b82f6" : "rgba(255,255,255,0.1)",
+                          borderColor: isAllSelected || isSomeSelected ? "transparent" : "rgba(255,255,255,0.3)",
+                        }}>
+                          {isAllSelected && "✓"}
+                          {isSomeSelected && "−"}
+                        </span>
+                      </label>
+                    </th>
                     <th style={thStyle}>#</th>
                     <th style={thStyle}>▲▼</th>
                     <th style={thStyle}>TF</th>
@@ -801,16 +907,18 @@ export default function MemoryPage() {
                 </thead>
                 <tbody>
                   {sortedGenomes.map((g, idx) => {
-                    const isSelected = selectedGenome?.genome_hash === g.genome_hash;
+                    const isDetailSelected = selectedGenome?.genome_hash === g.genome_hash;
+                    const isChecked = selectedGenomeIds.has(g.genome_hash);
                     const isTop1 = idx === 0;
 
                     return (
                       <tr
                         key={g.genome_hash || idx}
-                        onClick={() => setSelectedGenome(isSelected ? null : g)}
                         style={{
                           cursor: "pointer",
-                          background: isSelected
+                          background: isChecked
+                            ? "rgba(34,197,94,0.15)"
+                            : isDetailSelected
                             ? "rgba(59,130,246,0.2)"
                             : isTop1
                             ? "rgba(255,215,0,0.08)"
@@ -818,17 +926,51 @@ export default function MemoryPage() {
                             ? "transparent"
                             : "rgba(255,255,255,0.02)",
                           borderBottom: "1px solid rgba(255,255,255,0.05)",
-                          borderLeft: isTop1 ? "3px solid #fbbf24" : "3px solid transparent",
+                          borderLeft: isChecked
+                            ? "3px solid #22c55e"
+                            : isTop1
+                            ? "3px solid #fbbf24"
+                            : "3px solid transparent",
                         }}
                       >
-                        <td style={tdStyle}>
+                        {/* Row checkbox */}
+                        <td style={{ ...tdStyle, textAlign: "center", width: 40 }}>
+                          <label
+                            style={checkboxLabel}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleGenomeSelection(g.genome_hash)}
+                              style={checkboxInput}
+                            />
+                            <span style={{
+                              ...checkboxCustom,
+                              background: isChecked ? "#22c55e" : "rgba(255,255,255,0.1)",
+                              borderColor: isChecked ? "transparent" : "rgba(255,255,255,0.3)",
+                            }}>
+                              {isChecked && "✓"}
+                            </span>
+                          </label>
+                        </td>
+                        <td
+                          style={tdStyle}
+                          onClick={() => setSelectedGenome(isDetailSelected ? null : g)}
+                        >
                           {isTop1 && <span style={{ marginRight: 4 }}>⭐</span>}
                           #{idx + 1}
                         </td>
-                        <td style={{ ...tdStyle, textAlign: "center" }}>
+                        <td
+                          style={{ ...tdStyle, textAlign: "center" }}
+                          onClick={() => setSelectedGenome(isDetailSelected ? null : g)}
+                        >
                           <RankChangeIndicator genome={g} />
                         </td>
-                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 11 }}>
+                        <td
+                          style={{ ...tdStyle, fontFamily: "monospace", fontSize: 11 }}
+                          onClick={() => setSelectedGenome(isDetailSelected ? null : g)}
+                        >
                           <span style={{
                             color: TF_COLORS[g.timeframe] || "#e5e7eb",
                             fontWeight: multiTfMode ? 600 : 400,
@@ -839,7 +981,10 @@ export default function MemoryPage() {
                             {g.timeframe || timeframe}
                           </span>
                         </td>
-                        <td style={tdStyle}>
+                        <td
+                          style={tdStyle}
+                          onClick={() => setSelectedGenome(isDetailSelected ? null : g)}
+                        >
                           <div style={{ color: (g.netProfitPct || 0) >= 0 ? "#22c55e" : "#ef4444" }}>
                             {formatMoney(g.netProfit)}
                           </div>
@@ -847,21 +992,48 @@ export default function MemoryPage() {
                             ({formatPct(g.netProfitPct)})
                           </div>
                         </td>
-                        <td style={{ ...tdStyle, color: (g.pf || 0) >= 1.5 ? "#22c55e" : "#e5e7eb" }}>
+                        <td
+                          style={{ ...tdStyle, color: (g.pf || 0) >= 1.5 ? "#22c55e" : "#e5e7eb" }}
+                          onClick={() => setSelectedGenome(isDetailSelected ? null : g)}
+                        >
                           {g.pf?.toFixed(2) || "-"}
                         </td>
-                        <td style={tdStyle}>{formatPct(g.winrate)}</td>
-                        <td style={{ ...tdStyle, color: "#f87171" }}>{formatPct(g.maxDD)}</td>
-                        <td style={tdStyle}>{g.totalTrades || "-"}</td>
-                        <td style={{ ...tdStyle, fontWeight: 600, color: "#22c55e" }}>
+                        <td
+                          style={tdStyle}
+                          onClick={() => setSelectedGenome(isDetailSelected ? null : g)}
+                        >
+                          {formatPct(g.winrate)}
+                        </td>
+                        <td
+                          style={{ ...tdStyle, color: "#f87171" }}
+                          onClick={() => setSelectedGenome(isDetailSelected ? null : g)}
+                        >
+                          {formatPct(g.maxDD)}
+                        </td>
+                        <td
+                          style={tdStyle}
+                          onClick={() => setSelectedGenome(isDetailSelected ? null : g)}
+                        >
+                          {g.totalTrades || "-"}
+                        </td>
+                        <td
+                          style={{ ...tdStyle, fontWeight: 600, color: "#22c55e" }}
+                          onClick={() => setSelectedGenome(isDetailSelected ? null : g)}
+                        >
                           {g.score?.toFixed(2) || "-"}
                         </td>
-                        <td style={{ ...tdStyle, textAlign: "center" }}>
+                        <td
+                          style={{ ...tdStyle, textAlign: "center" }}
+                          onClick={() => setSelectedGenome(isDetailSelected ? null : g)}
+                        >
                           <span style={sourceStyle}>
                             Run #{g.source || 1}
                           </span>
                         </td>
-                        <td style={{ ...tdStyle, fontSize: 10, opacity: 0.8 }}>
+                        <td
+                          style={{ ...tdStyle, fontSize: 10, opacity: 0.8 }}
+                          onClick={() => setSelectedGenome(isDetailSelected ? null : g)}
+                        >
                           {g.backtest_start && g.backtest_end ? (
                             <div>
                               <div>{formatDateShort(g.backtest_start)}</div>
@@ -1302,4 +1474,65 @@ const noChangeStyle = {
   color: "#64748b",
   fontSize: 14,
   fontWeight: 500,
+};
+
+// Selection bar styles
+const selectionBar = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  padding: "12px 16px",
+  marginBottom: 12,
+  background: "rgba(34,197,94,0.1)",
+  border: "1px solid rgba(34,197,94,0.3)",
+  borderRadius: 8,
+};
+
+const combineBtn = {
+  padding: "8px 16px",
+  borderRadius: 6,
+  border: "1px solid #22c55e",
+  background: "linear-gradient(135deg, rgba(34,197,94,0.2), rgba(34,197,94,0.1))",
+  color: "#22c55e",
+  fontWeight: 600,
+  fontSize: 13,
+};
+
+const clearBtn = {
+  padding: "6px 12px",
+  borderRadius: 6,
+  border: "1px solid rgba(255,255,255,0.2)",
+  background: "rgba(255,255,255,0.05)",
+  color: "#94a3b8",
+  cursor: "pointer",
+  fontSize: 12,
+};
+
+// Checkbox styles
+const checkboxLabel = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  cursor: "pointer",
+};
+
+const checkboxInput = {
+  position: "absolute",
+  opacity: 0,
+  width: 0,
+  height: 0,
+};
+
+const checkboxCustom = {
+  width: 18,
+  height: 18,
+  borderRadius: 4,
+  border: "2px solid rgba(255,255,255,0.3)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontSize: 12,
+  fontWeight: 700,
+  color: "#fff",
+  transition: "all 0.15s ease",
 };
