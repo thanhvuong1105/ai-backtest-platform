@@ -182,37 +182,123 @@ def tournament_select(
     return selected
 
 
-def create_random_genome() -> Dict:
-    """Create a random genome within bounds."""
+def create_random_genome(ui_ranges: Dict = None) -> Dict:
+    """
+    Create a random genome within bounds.
+
+    Args:
+        ui_ranges: Optional UI ranges from frontend with format:
+            {
+                "st_atr_period": {"start": 8, "end": 16},
+                "st_mult": {"start": 1.5, "end": 3.0},
+                ...
+            }
+
+    Returns:
+        Random genome within specified or default bounds
+    """
+    # If ui_ranges provided, use them; otherwise use defaults
+    if ui_ranges:
+        logger.info("Population initialized from UI ranges")
+        genome = _create_genome_from_ui_ranges(ui_ranges)
+    else:
+        # Default ranges (fallback)
+        genome = {
+            "entry": {
+                "st_atrPeriod": random.randint(8, 16),
+                "st_src": "hl2",
+                "st_mult": round(random.uniform(1.5, 3.0), 2),
+                "st_useATR": True,
+                "rf_src": "close",
+                "rf_period": random.randint(80, 120),
+                "rf_mult": round(random.uniform(2.5, 4.0), 2),
+                "rsi_length": random.randint(10, 18),
+                "rsi_ma_length": random.randint(4, 8),
+            },
+            "sl": {
+                "st_atrPeriod": 10,
+                "st_src": "hl2",
+                "st_mult": round(random.uniform(3.0, 5.0), 2),
+                "st_useATR": True,
+                "rf_period": 100,
+                "rf_mult": round(random.uniform(5.0, 8.0), 2),
+            },
+            "tp_dual": {
+                "st_atrPeriod": 10,
+                "st_mult": 2.0,
+                "rr_mult": round(random.uniform(1.0, 2.0), 2),
+            },
+            "tp_rsi": {
+                "st_atrPeriod": 10,
+                "st_mult": 2.0,
+                "rr_mult": round(random.uniform(1.0, 2.0), 2),
+            },
+            "mode": {
+                "showDualFlip": True,
+                "showRSI": True,
+            },
+        }
+
+    return repair_genome(genome)
+
+
+def _create_genome_from_ui_ranges(ui_ranges: Dict) -> Dict:
+    """
+    Create genome from UI ranges (start-end only, no step).
+
+    Mapping from UI param names to genome structure:
+    - st_atr_period -> entry.st_atrPeriod
+    - st_mult -> entry.st_mult
+    - rf_period -> entry.rf_period
+    - rf_mult -> entry.rf_mult
+    - rsi_length -> entry.rsi_length
+    - rsi_ma_length -> entry.rsi_ma_length
+    - tp_rr_mult -> tp_dual.rr_mult, tp_rsi.rr_mult
+    - sl_mult -> sl.st_mult, sl.rf_mult
+    """
+    def sample_value(param_name: str, default_min: float, default_max: float, is_int: bool = False):
+        """Sample value from UI range or use default."""
+        if param_name in ui_ranges:
+            range_def = ui_ranges[param_name]
+            start = range_def.get("start", default_min)
+            end = range_def.get("end", default_max)
+        else:
+            start, end = default_min, default_max
+
+        if is_int:
+            return random.randint(int(start), int(end))
+        else:
+            return round(random.uniform(start, end), 2)
+
     genome = {
         "entry": {
-            "st_atrPeriod": random.randint(8, 16),
+            "st_atrPeriod": sample_value("st_atr_period", 8, 16, is_int=True),
             "st_src": "hl2",
-            "st_mult": round(random.uniform(1.5, 3.0), 2),
+            "st_mult": sample_value("st_mult", 1.5, 3.0),
             "st_useATR": True,
             "rf_src": "close",
-            "rf_period": random.randint(80, 120),
-            "rf_mult": round(random.uniform(2.5, 4.0), 2),
-            "rsi_length": random.randint(10, 18),
-            "rsi_ma_length": random.randint(4, 8),
+            "rf_period": sample_value("rf_period", 80, 120, is_int=True),
+            "rf_mult": sample_value("rf_mult", 2.5, 4.0),
+            "rsi_length": sample_value("rsi_length", 10, 18, is_int=True),
+            "rsi_ma_length": sample_value("rsi_ma_length", 4, 8, is_int=True),
         },
         "sl": {
             "st_atrPeriod": 10,
             "st_src": "hl2",
-            "st_mult": round(random.uniform(3.0, 5.0), 2),
+            "st_mult": sample_value("sl_mult", 3.0, 5.0),
             "st_useATR": True,
             "rf_period": 100,
-            "rf_mult": round(random.uniform(5.0, 8.0), 2),
+            "rf_mult": sample_value("sl_rf_mult", 5.0, 8.0),
         },
         "tp_dual": {
             "st_atrPeriod": 10,
             "st_mult": 2.0,
-            "rr_mult": round(random.uniform(1.0, 2.0), 2),
+            "rr_mult": sample_value("tp_rr_mult", 0.1, 5.0),
         },
         "tp_rsi": {
             "st_atrPeriod": 10,
             "st_mult": 2.0,
-            "rr_mult": round(random.uniform(1.0, 2.0), 2),
+            "rr_mult": sample_value("tp_rr_mult", 0.1, 5.0),
         },
         "mode": {
             "showDualFlip": True,
@@ -220,7 +306,37 @@ def create_random_genome() -> Dict:
         },
     }
 
-    return repair_genome(genome)
+    return genome
+
+
+def validate_ui_ranges(ui_ranges: Dict) -> Tuple[bool, str]:
+    """
+    Validate UI ranges before population initialization.
+
+    Args:
+        ui_ranges: UI ranges dict from frontend
+
+    Returns:
+        (is_valid, error_message)
+    """
+    if not ui_ranges:
+        return False, "Missing UI ranges - cannot initialize population"
+
+    required_params = ["st_atr_period", "st_mult", "rf_period", "rf_mult", "rsi_length"]
+    missing = []
+
+    for param in required_params:
+        if param not in ui_ranges:
+            missing.append(param)
+        else:
+            range_def = ui_ranges[param]
+            if "start" not in range_def or "end" not in range_def:
+                missing.append(f"{param} (missing start/end)")
+
+    if missing:
+        return False, f"Missing UI ranges for: {', '.join(missing)}"
+
+    return True, ""
 
 
 def genome_distance(genome1: Dict, genome2: Dict) -> float:
