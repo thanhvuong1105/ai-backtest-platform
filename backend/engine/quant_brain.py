@@ -20,7 +20,7 @@ import sys
 import time
 import copy
 import logging
-from typing import Dict, Any, List, Callable, Optional
+from typing import Dict, Any, List, Callable, Optional, Tuple
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -38,7 +38,8 @@ from .param_memory import (
     get_all_top_genomes,
     query_similar_genomes,
     register_strategy,
-    get_memory_stats
+    get_memory_stats,
+    get_redis
 )
 from .coherence_validator import (
     validate_genome,
@@ -141,6 +142,74 @@ AUTO_TUNING_INTERVAL = int(os.getenv("AUTO_TUNING_INTERVAL", 10))  # Check every
 
 # Cancel check interval
 CANCEL_CHECK_INTERVAL = 0.5  # Check every 0.5 seconds
+
+# E1) No-improvement threshold (anti-noise)
+NO_IMPROVEMENT_EPS = float(os.getenv("NO_IMPROVEMENT_EPS", 0.001))
+
+
+# ═══════════════════════════════════════════════════════
+# E2) RUN METADATA MANAGEMENT
+# ═══════════════════════════════════════════════════════
+
+def get_next_run_index(strategy_hash: str, symbol: str, timeframe: str) -> int:
+    """Get next run_index (Source) for a new Quant Brain run."""
+    try:
+        r = get_redis()
+        key = f"run_index:{strategy_hash}:{symbol}:{timeframe}"
+        current = r.get(key)
+        if current is None:
+            r.set(key, 1)
+            return 1
+        next_idx = int(current) + 1
+        r.set(key, next_idx)
+        return next_idx
+    except Exception as e:
+        logger.warning(f"Failed to get run_index: {e}")
+        return 1
+
+
+def store_run_metadata(
+    run_id: str, run_index: int, strategy_hash: str, symbol: str, timeframe: str,
+    run_status: str, best_new_score: float, best_old_score: float, genomes_count: int
+) -> bool:
+    """E2) Store run metadata in Redis for tracking."""
+    try:
+        r = get_redis()
+        key = f"run_meta:{strategy_hash}:{symbol}:{timeframe}:{run_id}"
+        record = {
+            "run_id": run_id, "run_index": run_index, "strategy_hash": strategy_hash,
+            "symbol": symbol, "timeframe": timeframe, "run_status": run_status,
+            "best_new_score": best_new_score, "best_old_score": best_old_score,
+            "genomes_count": genomes_count, "timestamp": int(time.time()),
+        }
+        r.setex(key, 30 * 24 * 3600, json.dumps(record))
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to store run metadata: {e}")
+        return False
+
+
+def check_improvement(
+    new_genomes: List[Dict], leaderboard_genomes: List[Dict], score_key: str = "brainScore"
+) -> Tuple[str, float, float, float]:
+    """E1) Check if new genomes improve over leaderboard."""
+    best_new_score = 0.0
+    if new_genomes:
+        scores = [
+            g.get("summary", {}).get(score_key, 0) if "summary" in g
+            else g.get("results", {}).get("score", 0) for g in new_genomes
+        ]
+        best_new_score = max(scores) if scores else 0.0
+
+    best_old_score = 0.0
+    if leaderboard_genomes:
+        scores = [g.get("results", {}).get("score", 0) for g in leaderboard_genomes]
+        best_old_score = max(scores) if scores else 0.0
+
+    delta = best_new_score - best_old_score
+    if best_new_score > best_old_score + NO_IMPROVEMENT_EPS:
+        return "IMPROVED", best_new_score, best_old_score, delta
+    return "NO_IMPROVEMENT", best_new_score, best_old_score, delta
 
 
 # ═══════════════════════════════════════════════════════
