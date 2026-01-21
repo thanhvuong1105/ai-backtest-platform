@@ -24,21 +24,34 @@ from .regime_classifier import MarketRegime, sample_params_for_regime
 
 logger = logging.getLogger(__name__)
 
-# Configuration
-POPULATION_SIZE = int(os.getenv("GENOME_POPULATION_SIZE", 30))
-GENERATIONS = int(os.getenv("GENOME_GENERATIONS", 3))
+# =============================================================================
+# SERVER SPECIFICATIONS (8 vCPU, 32GB RAM, 20+ Workers)
+# =============================================================================
+VCPU_COUNT = int(os.getenv("CPU_COUNT", 8))
+MIN_WORKERS = int(os.getenv("MIN_WORKERS", 20))
+
+# =============================================================================
+# GENETIC ALGORITHM CONFIGURATION
+# =============================================================================
+POPULATION_SIZE = int(os.getenv("GENOME_POPULATION_SIZE", 100))  # Increased for better exploration
+GENERATIONS = int(os.getenv("GENOME_GENERATIONS", 10))  # Increased for better convergence
 MUTATION_RATE = float(os.getenv("GENOME_MUTATION_RATE", 0.15))
-CROSSOVER_RATE = float(os.getenv("GENOME_CROSSOVER_RATE", 0.7))
+CROSSOVER_RATE = float(os.getenv("GENOME_CROSSOVER_RATE", 0.8))  # Increased crossover
 TOURNAMENT_SIZE = int(os.getenv("GENOME_TOURNAMENT_SIZE", 5))
 ELITE_COUNT = int(os.getenv("GENOME_ELITE_COUNT", 5))
 
-# Parallel processing configuration
+# =============================================================================
+# PARALLEL PROCESSING CONFIGURATION
+# Optimized for 20+ concurrent evaluations
+# =============================================================================
 PARALLEL_FITNESS = os.getenv("PARALLEL_FITNESS", "true").lower() == "true"
 _env_workers = os.getenv("MAX_THREAD_WORKERS", "")
 if _env_workers:
     MAX_FITNESS_WORKERS = int(_env_workers)
 else:
-    MAX_FITNESS_WORKERS = min(16, max(4, (os.cpu_count() or 4)))
+    # Use minimum 20 workers for I/O-bound fitness evaluations
+    # Not limited by CPU cores since fitness evaluation is mostly I/O
+    MAX_FITNESS_WORKERS = max(MIN_WORKERS, min(32, (os.cpu_count() or 8) * 3))
 
 
 # ═══════════════════════════════════════════════════════

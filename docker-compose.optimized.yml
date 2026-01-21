@@ -1,0 +1,297 @@
+# =============================================================================
+# DOCKER COMPOSE - OPTIMIZED FOR 8 vCPU, 32GB RAM, 20+ WORKERS
+# =============================================================================
+# Performance targets:
+# - Concurrent backtests: 20 simultaneous
+# - GA evaluations: 20 parallel fitness calculations
+# - Memory efficiency: 85% utilization (28GB active)
+# - CPU efficiency: 90%+ utilization during optimization
+# =============================================================================
+
+version: "3.8"
+
+services:
+  # ===========================================================================
+  # REDIS - Message broker and result backend
+  # Optimized for high concurrency
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: quant-brain-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: >
+      redis-server
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --tcp-backlog 511
+      --maxclients 10000
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # ===========================================================================
+  # BACKEND - FastAPI server
+  # Optimized with Gunicorn + Uvicorn workers
+  # ===========================================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    container_name: quant-brain-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      # Server
+      - FASTAPI_HOST=0.0.0.0
+      - FASTAPI_PORT=8000
+      - PROJECT_ROOT=/app
+      - PYTHONUNBUFFERED=1
+      # Performance
+      - GUNICORN_WORKERS=4
+      - GUNICORN_THREADS=2
+    command: >
+      gunicorn app.main:app
+      --workers 4
+      --worker-class uvicorn.workers.UvicornWorker
+      --bind 0.0.0.0:8000
+      --timeout 120
+      --keep-alive 5
+      --max-requests 1000
+      --max-requests-jitter 100
+    volumes:
+      - ./backend/engine/data:/app/engine/data:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+        reservations:
+          memory: 512M
+          cpus: '1'
+
+  # ===========================================================================
+  # CELERY WORKER - Background task processor
+  # OPTIMIZED FOR 20+ CONCURRENT WORKERS
+  # ===========================================================================
+  celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    container_name: quant-brain-celery
+    command: >
+      celery -A app.services.celery_app.celery worker
+      --loglevel=info
+      -Q default,backtest,optimization,ai_agent,quant_brain
+      --concurrency=${CELERY_CONCURRENCY:-20}
+      --pool=prefork
+      --max-memory-per-child=512000
+      --max-tasks-per-child=100
+    environment:
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - PROJECT_ROOT=/app
+      - PYTHONUNBUFFERED=1
+
+      # =========================================================================
+      # SERVER SPECIFICATIONS
+      # =========================================================================
+      - CPU_COUNT=8
+      - TOTAL_RAM_GB=32
+      - MIN_WORKERS=20
+      - MAX_WORKERS=32
+
+      # =========================================================================
+      # CELERY WORKER SETTINGS - 20+ WORKERS
+      # =========================================================================
+      - CELERY_CONCURRENCY=20
+      - CELERY_PREFETCH=2
+      - CELERY_POOL=prefork
+      - WORKER_MAX_MEMORY_KB=512000
+      - WORKER_MAX_TASKS=100
+      - BROKER_POOL_LIMIT=20
+
+      # =========================================================================
+      # PARALLEL PROCESSING
+      # =========================================================================
+      - MAX_PARALLEL_RUNS=2000
+      - MAX_THREAD_WORKERS=24
+      - PROCESS_WORKERS=8
+      - PARALLEL_FITNESS=true
+
+      # =========================================================================
+      # GENETIC ALGORITHM - OPTIMIZED
+      # =========================================================================
+      - GENOME_POPULATION_SIZE=100
+      - GENOME_GENERATIONS=10
+      - GA_PARALLEL_EVALUATIONS=20
+      - GENOME_MUTATION_RATE=0.15
+      - GENOME_CROSSOVER_RATE=0.8
+      - GENOME_ELITE_COUNT=5
+
+      # =========================================================================
+      # MEMORY MANAGEMENT (28GB available)
+      # =========================================================================
+      - MAX_MEMORY_GB=28
+      - DATA_CACHE_GB=12
+      - MODEL_CACHE_GB=6
+
+      # =========================================================================
+      # CACHE SETTINGS
+      # =========================================================================
+      - INDICATOR_CACHE_SIZE=4096
+      - DATA_CACHE_SIZE=1024
+      - INDICATOR_RESULT_CACHE_SIZE=2048
+      - REDIS_POOL_SIZE=50
+      - DATA_PRELOAD=true
+      - PROGRESS_BATCH_SIZE=1
+
+      # =========================================================================
+      # NUMBA/NUMPY OPTIMIZATION
+      # =========================================================================
+      - NUMBA_NUM_THREADS=8
+      - USE_FAST_STRATEGY=true
+      - NUMBA_CACHE_DIR=/tmp/numba_cache
+      - OMP_NUM_THREADS=8
+      - MKL_NUM_THREADS=8
+      - NUMEXPR_NUM_THREADS=8
+      - OPENBLAS_NUM_THREADS=8
+
+      # =========================================================================
+      # PYTHON OPTIMIZATION
+      # =========================================================================
+      - PYTHONOPTIMIZE=2
+      - PYTHONHASHSEED=0
+      - MALLOC_ARENA_MAX=2
+
+      # =========================================================================
+      # ROBUSTNESS TESTING
+      # =========================================================================
+      - MONTE_CARLO_RUNS=500
+      - WALK_FORWARD_WINDOWS=3
+
+      # =========================================================================
+      # AUTO-TUNING
+      # =========================================================================
+      - AUTO_TUNING_ENABLED=true
+      - AUTO_TUNING_INTERVAL=10
+      - TUNING_COOLDOWN_SEC=15
+      - TUNING_MEMORY_HIGH_PCT=85
+      - TUNING_MEMORY_SAFE_PCT=75
+      - TUNING_CPU_HIGH_PCT=95
+      - TUNING_MIN_WORKERS=10
+      - TUNING_MAX_WORKERS=24
+
+      # =========================================================================
+      # TIMEOUTS
+      # =========================================================================
+      - JOB_TIMEOUT_SEC=3600
+      - MAX_STDOUT_SIZE=20971520
+
+    volumes:
+      - ./backend/engine/data:/app/engine/data:ro
+      - numba-cache:/tmp/numba_cache
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 28G
+          cpus: '8'
+        reservations:
+          memory: 16G
+          cpus: '4'
+
+  # ===========================================================================
+  # FRONTEND - React app served by nginx
+  # ===========================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+        - NODE_OPTIONS=--max_old_space_size=2048
+    container_name: quant-brain-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+
+  # ===========================================================================
+  # FLOWER - Celery monitoring
+  # ===========================================================================
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: quant-brain-flower
+    command: celery -A app.services.celery_app.celery flower --port=5555 --persistent=True
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles:
+      - monitoring
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+
+volumes:
+  redis-data:
+  numba-cache:
+
+networks:
+  default:
+    name: quant-brain-network
