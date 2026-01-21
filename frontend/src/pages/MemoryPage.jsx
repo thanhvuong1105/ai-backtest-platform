@@ -27,13 +27,25 @@ const TF_COLORS = {
   "1d": "#ec4899",   // pink
 };
 
+// Sortable columns configuration
+const SORTABLE_COLUMNS = {
+  netProfit: { key: "netProfit", label: "Total PNL", defaultDir: "desc" },
+  pf: { key: "pf", label: "PF", defaultDir: "desc" },
+  winrate: { key: "winrate", label: "WR", defaultDir: "desc" },
+  maxDD: { key: "maxDD", label: "DD", defaultDir: "asc" },  // Lower DD is better
+  totalTrades: { key: "totalTrades", label: "Trades", defaultDir: "desc" },
+  score: { key: "score", label: "Score", defaultDir: "desc" },
+  source: { key: "source", label: "Source", defaultDir: "desc" },
+};
+
 export default function MemoryPage() {
   const [stats, setStats] = useState(null);
   const [genomes, setGenomes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedGenome, setSelectedGenome] = useState(null);
-  const [sortBy] = useState("pf");  // Fixed to PF only
+  const [sortBy, setSortBy] = useState("pf");  // Current sort column
+  const [sortDir, setSortDir] = useState("desc");  // "asc" or "desc"
   const [overlayLimit, setOverlayLimit] = useState("5");
   const [visibleSeries, setVisibleSeries] = useState({});
 
@@ -254,12 +266,42 @@ export default function MemoryPage() {
     fetchData();
   }, [fetchData, resetTrigger]);
 
-  // Sort genomes by PF (Profit Factor) - descending
+  // Handle column sort click
+  const handleSort = useCallback((columnKey) => {
+    if (sortBy === columnKey) {
+      // Toggle direction if same column
+      setSortDir(prev => prev === "desc" ? "asc" : "desc");
+    } else {
+      // New column - use default direction
+      setSortBy(columnKey);
+      setSortDir(SORTABLE_COLUMNS[columnKey]?.defaultDir || "desc");
+    }
+  }, [sortBy]);
+
+  // Sort genomes by selected column and direction
   const sortedGenomes = useMemo(() => {
     const arr = [...genomes];
-    arr.sort((a, b) => (b.pf || 0) - (a.pf || 0));
+
+    arr.sort((a, b) => {
+      let aVal = a[sortBy] ?? 0;
+      let bVal = b[sortBy] ?? 0;
+
+      // Handle special cases
+      if (sortBy === "netProfit") {
+        aVal = a.netProfit ?? 0;
+        bVal = b.netProfit ?? 0;
+      }
+
+      // Compare
+      if (sortDir === "desc") {
+        return bVal - aVal;
+      } else {
+        return aVal - bVal;
+      }
+    });
+
     return arr.map((g, idx) => ({ ...g, displayRank: idx + 1 }));
-  }, [genomes]);
+  }, [genomes, sortBy, sortDir]);
 
   // Filter genomes for chart based on overlay limit
   const chartGenomes = useMemo(() => {
@@ -526,9 +568,9 @@ export default function MemoryPage() {
           </div>
         )}
 
-        {/* Main content */}
-        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 20 }}>
-          {/* Left: Equity Chart */}
+        {/* Main content - Stacked layout (Chart on top, Table below) */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {/* TOP: Equity Chart - Full width */}
           <div style={panel}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <h2 style={{ margin: 0, fontSize: 16 }}>Equity / PnL % (overlay)</h2>
@@ -558,7 +600,7 @@ export default function MemoryPage() {
               </div>
             </div>
 
-            <div style={chartContainer}>
+            <div style={chartContainerFull}>
               {equityData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={equityData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
@@ -675,7 +717,7 @@ export default function MemoryPage() {
             </div>
           </div>
 
-          {/* Right: Leaderboard */}
+          {/* BOTTOM: Leaderboard - Full width */}
           <div style={panel}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <h2 style={{ margin: 0, fontSize: 16 }}>
@@ -686,23 +728,74 @@ export default function MemoryPage() {
                   </span>
                 )}
               </h2>
-              <span style={{ fontSize: 12, opacity: 0.6 }}>Sorted by PF</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 12, opacity: 0.6 }}>
+                  Sorted by <span style={{ color: "#22c55e", fontWeight: 600 }}>{SORTABLE_COLUMNS[sortBy]?.label || sortBy}</span>
+                  {sortDir === "desc" ? " ▼" : " ▲"}
+                </span>
+                <span style={{ fontSize: 11, opacity: 0.5 }}>
+                  {sortedGenomes.length} genomes
+                </span>
+              </div>
             </div>
 
             {/* Table */}
-            <div style={tableContainer}>
+            <div style={tableContainerFull}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr style={{ background: "rgba(255,255,255,0.05)" }}>
                     <th style={thStyle}>#</th>
                     <th style={thStyle}>▲▼</th>
                     <th style={thStyle}>TF</th>
-                    <th style={thStyle}>Total PNL</th>
-                    <th style={thStyle}>PF</th>
-                    <th style={thStyle}>WR</th>
-                    <th style={thStyle}>DD</th>
-                    <th style={thStyle}>Trades</th>
-                    <th style={thStyle}>Score</th>
+                    <SortableHeader
+                      columnKey="netProfit"
+                      label="Total PNL"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      columnKey="pf"
+                      label="PF"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      columnKey="winrate"
+                      label="WR"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      columnKey="maxDD"
+                      label="DD"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      columnKey="totalTrades"
+                      label="Trades"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      columnKey="score"
+                      label="Score"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      columnKey="source"
+                      label="Source"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
                     <th style={thStyle}>Range</th>
                   </tr>
                 </thead>
@@ -762,6 +855,11 @@ export default function MemoryPage() {
                         <td style={tdStyle}>{g.totalTrades || "-"}</td>
                         <td style={{ ...tdStyle, fontWeight: 600, color: "#22c55e" }}>
                           {g.score?.toFixed(2) || "-"}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "center" }}>
+                          <span style={sourceStyle}>
+                            Run #{g.source || 1}
+                          </span>
                         </td>
                         <td style={{ ...tdStyle, fontSize: 10, opacity: 0.8 }}>
                           {g.backtest_start && g.backtest_end ? (
@@ -890,6 +988,43 @@ export default function MemoryPage() {
   );
 }
 
+// Helper component - Sortable Header
+function SortableHeader({ columnKey, label, sortBy, sortDir, onSort }) {
+  const isActive = sortBy === columnKey;
+
+  return (
+    <th
+      style={{
+        ...thStyle,
+        cursor: "pointer",
+        userSelect: "none",
+        transition: "background 0.15s",
+      }}
+      onClick={() => onSort(columnKey)}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent";
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "space-between" }}>
+        <span>{label}</span>
+        <div style={{ display: "flex", flexDirection: "column", fontSize: 8, lineHeight: 1, opacity: isActive ? 1 : 0.4 }}>
+          <span style={{
+            color: isActive && sortDir === "asc" ? "#22c55e" : "#64748b",
+            fontWeight: isActive && sortDir === "asc" ? 700 : 400,
+          }}>▲</span>
+          <span style={{
+            color: isActive && sortDir === "desc" ? "#22c55e" : "#64748b",
+            fontWeight: isActive && sortDir === "desc" ? 700 : 400,
+          }}>▼</span>
+        </div>
+      </div>
+    </th>
+  );
+}
+
 // Helper component
 function DetailRow({ label, value, color }) {
   return (
@@ -993,6 +1128,14 @@ const chartContainer = {
   padding: 12,
 };
 
+// Full width chart container (for new layout)
+const chartContainerFull = {
+  height: 350,
+  borderRadius: 12,
+  background: "rgba(0,0,0,0.2)",
+  padding: 12,
+};
+
 const legendBtn = {
   display: "flex",
   alignItems: "center",
@@ -1011,6 +1154,26 @@ const tableContainer = {
   overflowY: "auto",
   border: "1px solid rgba(255,255,255,0.06)",
   borderRadius: 8,
+};
+
+// Full width table container (for new layout)
+const tableContainerFull = {
+  maxHeight: 450,
+  overflowY: "auto",
+  border: "1px solid rgba(255,255,255,0.06)",
+  borderRadius: 8,
+};
+
+// Source column style
+const sourceStyle = {
+  display: "inline-block",
+  padding: "3px 8px",
+  borderRadius: 4,
+  background: "rgba(59,130,246,0.15)",
+  color: "#60a5fa",
+  fontSize: 10,
+  fontWeight: 600,
+  letterSpacing: "0.3px",
 };
 
 const thStyle = {
