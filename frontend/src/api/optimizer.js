@@ -1,8 +1,7 @@
 // API Base URL
 // In Docker production: use /api (nginx proxy)
 // In development: use direct URL to backend
-// For AWS EC2 deployment: use the public IP
-const API_BASE = import.meta.env.VITE_API_URL || "http://54.206.158.194:8000/api";
+const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
 // Default timeouts
 const DEFAULT_TIMEOUT = 30000; // 30 seconds for normal requests
