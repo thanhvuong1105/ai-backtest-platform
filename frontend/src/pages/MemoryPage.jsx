@@ -1008,16 +1008,27 @@ function SortableHeader({ columnKey, label, sortBy, sortDir, onSort }) {
         e.currentTarget.style.background = "transparent";
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "space-between" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "space-between" }}>
         <span>{label}</span>
-        <div style={{ display: "flex", flexDirection: "column", fontSize: 8, lineHeight: 1, opacity: isActive ? 1 : 0.4 }}>
+        <div style={{
+          display: "flex",
+          flexDirection: "column",
+          fontSize: 11,
+          lineHeight: 1,
+          gap: 1,
+          padding: "2px 4px",
+          borderRadius: 4,
+          background: isActive ? "rgba(34,197,94,0.15)" : "transparent",
+        }}>
           <span style={{
             color: isActive && sortDir === "asc" ? "#22c55e" : "#64748b",
             fontWeight: isActive && sortDir === "asc" ? 700 : 400,
+            fontSize: 10,
           }}>▲</span>
           <span style={{
             color: isActive && sortDir === "desc" ? "#22c55e" : "#64748b",
             fontWeight: isActive && sortDir === "desc" ? 700 : 400,
+            fontSize: 10,
           }}>▼</span>
         </div>
       </div>
