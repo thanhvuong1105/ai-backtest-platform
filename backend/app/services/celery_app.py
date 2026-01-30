@@ -69,10 +69,10 @@ celery.conf.update(
     worker_max_tasks_per_child=int(os.getenv("WORKER_MAX_TASKS", 100)),
 
     # ==========================================================================
-    # TASK TIME LIMITS
+    # TASK TIME LIMITS - UNLIMITED
     # ==========================================================================
-    task_soft_time_limit=int(os.getenv("JOB_TIMEOUT_SEC", 1800)),  # 30 min soft limit
-    task_time_limit=int(os.getenv("JOB_TIMEOUT_SEC", 1800)) + 60,  # 31 min hard limit
+    task_soft_time_limit=None,  # No soft limit
+    task_time_limit=None,  # No hard limit - run forever
 
     # ==========================================================================
     # RESULT SETTINGS
@@ -87,10 +87,21 @@ celery.conf.update(
     broker_pool_limit=int(os.getenv("BROKER_POOL_LIMIT", 20)),
 
     # ==========================================================================
-    # TASK ACKNOWLEDGMENT
+    # TASK ACKNOWLEDGMENT - PREVENT REDELIVERY FOR LONG TASKS
     # ==========================================================================
-    task_acks_late=True,  # Acknowledge task after completion
-    task_reject_on_worker_lost=True,  # Requeue task if worker dies
+    task_acks_late=False,  # Acknowledge immediately to prevent redelivery
+    task_reject_on_worker_lost=False,  # Don't requeue - let it fail cleanly
+
+    # ==========================================================================
+    # VISIBILITY TIMEOUT - CRITICAL FOR LONG RUNNING TASKS
+    # ==========================================================================
+    # Redis visibility timeout: 2 hours (7200 seconds)
+    # This prevents Redis from redelivering tasks that are still running
+    broker_transport_options={
+        'visibility_timeout': 86400,  # 24 hours - unlimited runtime
+        'socket_timeout': 30,
+        'socket_connect_timeout': 30,
+    },
 
     # ==========================================================================
     # PERFORMANCE OPTIMIZATIONS

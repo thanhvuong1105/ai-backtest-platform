@@ -6,8 +6,9 @@ View and manage stored genomes from ParamMemory.
 """
 
 from fastapi import APIRouter, Query
-from typing import List, Optional
+from typing import List, Dict, Any
 from datetime import datetime
+from pydantic import BaseModel
 
 from engine.param_memory import (
     get_memory_stats,
@@ -16,8 +17,9 @@ from engine.param_memory import (
     get_all_top_genomes,
     clear_strategy_memory,
     get_strategy_info,
+    store_genome_result,
 )
-from engine.strategy_hash import generate_strategy_hash, ENGINE_VERSION
+from engine.strategy_hash import generate_strategy_hash, generate_genome_hash, ENGINE_VERSION
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
 
@@ -109,6 +111,8 @@ async def get_genomes(
             # Backtest period
             "backtest_start": g.get("backtest_start", ""),
             "backtest_end": g.get("backtest_end", ""),
+            # Source (run_index) - which Quant Brain run discovered this genome
+            "source": g.get("source", 1),  # Default to 1 for legacy genomes without source
         })
 
     return {
@@ -188,4 +192,136 @@ async def clear_memory(
         "success": True,
         "deleted": deleted,
         "message": f"Deleted {deleted} genome records"
+    }
+
+
+class AddGenomeRequest(BaseModel):
+    """Request body for adding a genome to memory."""
+    symbol: str
+    timeframe: str
+    genome: Dict[str, Any]
+    results: Dict[str, Any]
+    equity_curve: List[Any] = []
+    source: int = 1
+    strategy_type: str = "rf_st_rsi"
+
+
+@router.post("/genomes/add")
+async def add_genome_to_memory(request: AddGenomeRequest):
+    """
+    Add a single genome to BXH Memory.
+
+    Used to manually add genomes from Quant Brain results.
+    """
+    import time
+
+    strategy_hash = generate_strategy_hash(request.strategy_type, ENGINE_VERSION)
+    genome_hash = generate_genome_hash(request.genome)
+
+    record = {
+        "strategy_hash": strategy_hash,
+        "symbol": request.symbol,
+        "timeframe": request.timeframe,
+        "genome_hash": genome_hash,
+        "market_profile": {},
+        "genome": request.genome,
+        "results": {
+            "pf": request.results.get("pf", request.results.get("profitFactor", 0)),
+            "winrate": request.results.get("winrate", 0),
+            "max_dd": request.results.get("max_dd", request.results.get("maxDrawdownPct", 0)),
+            "net_profit": request.results.get("net_profit", request.results.get("netProfit", 0)),
+            "net_profit_pct": request.results.get("net_profit_pct", request.results.get("netProfitPct", 0)),
+            "total_trades": request.results.get("total_trades", request.results.get("totalTrades", 0)),
+            "score": request.results.get("score", request.results.get("brainScore", 0)),
+            "ulcer_index": request.results.get("ulcer_index", request.results.get("ulcerIndex", 0)),
+            "loss_streak": request.results.get("loss_streak", request.results.get("maxLossStreak", 0)),
+            "robustness_score": request.results.get("robustness_score", 0),
+        },
+        "equity_curve": request.equity_curve,
+        "backtest_start": request.results.get("backtest_start", ""),
+        "backtest_end": request.results.get("backtest_end", ""),
+        "timestamp": int(time.time()),
+        "test_count": 1,
+        "source": request.source,
+    }
+
+    success = store_genome_result(record)
+
+    return {
+        "success": success,
+        "genome_hash": genome_hash,
+        "message": f"Genome {genome_hash[:8]} added to Memory" if success else "Failed to add genome"
+    }
+
+
+class AddGenomesBatchRequest(BaseModel):
+    """Request body for adding multiple genomes to memory."""
+    symbol: str
+    timeframe: str
+    genomes: List[Dict[str, Any]]  # List of {genome, results, equity_curve, source}
+    strategy_type: str = "rf_st_rsi"
+
+
+@router.post("/genomes/add-batch")
+async def add_genomes_batch(request: AddGenomesBatchRequest):
+    """
+    Add multiple genomes to BXH Memory.
+
+    Used to manually add Top 5 genomes from Quant Brain results.
+    """
+    import time
+
+    strategy_hash = generate_strategy_hash(request.strategy_type, ENGINE_VERSION)
+
+    added_count = 0
+    added_genomes = []
+
+    for item in request.genomes:
+        genome = item.get("genome", {})
+        results = item.get("results", item.get("summary", {}))
+        equity_curve = item.get("equity_curve", item.get("equityCurve", []))
+        source = item.get("source", 1)
+
+        genome_hash = generate_genome_hash(genome)
+
+        record = {
+            "strategy_hash": strategy_hash,
+            "symbol": request.symbol,
+            "timeframe": request.timeframe,
+            "genome_hash": genome_hash,
+            "market_profile": {},
+            "genome": genome,
+            "results": {
+                "pf": results.get("pf", results.get("profitFactor", 0)),
+                "winrate": results.get("winrate", 0),
+                "max_dd": results.get("max_dd", results.get("maxDrawdownPct", 0)),
+                "net_profit": results.get("net_profit", results.get("netProfit", 0)),
+                "net_profit_pct": results.get("net_profit_pct", results.get("netProfitPct", 0)),
+                "total_trades": results.get("total_trades", results.get("totalTrades", 0)),
+                "score": results.get("score", results.get("brainScore", 0)),
+                "ulcer_index": results.get("ulcer_index", results.get("ulcerIndex", 0)),
+                "loss_streak": results.get("loss_streak", results.get("maxLossStreak", 0)),
+                "robustness_score": results.get("robustness_score", 0),
+            },
+            "equity_curve": equity_curve,
+            "backtest_start": results.get("backtest_start", ""),
+            "backtest_end": results.get("backtest_end", ""),
+            "timestamp": int(time.time()),
+            "test_count": 1,
+            "source": source,
+        }
+
+        if store_genome_result(record):
+            added_count += 1
+            added_genomes.append({
+                "genome_hash": genome_hash,
+                "pf": record["results"]["pf"],
+            })
+
+    return {
+        "success": added_count > 0,
+        "added_count": added_count,
+        "total_requested": len(request.genomes),
+        "added_genomes": added_genomes,
+        "message": f"Added {added_count}/{len(request.genomes)} genomes to Memory"
     }

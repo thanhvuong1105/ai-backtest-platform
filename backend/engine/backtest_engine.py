@@ -9,7 +9,7 @@ import pandas as pd
 
 from .data_loader import load_csv
 from .metrics import calculate_metrics
-from .strategies.factory import create_strategy, USE_FAST_STRATEGY, FAST_AVAILABLE
+from .strategies.factory import create_strategy
 
 # Try to import Numba fast backtest loop
 try:
@@ -187,8 +187,6 @@ def run_backtest(strategy_config):
     # Use Numba-optimized backtest loop if available and strategy supports it
     use_fast_backtest = (
         NUMBA_BACKTEST_AVAILABLE and
-        USE_FAST_STRATEGY and
-        FAST_AVAILABLE and
         strategy_type == "rf_st_rsi" and
         hasattr(strategy, 'get_indicator_arrays')
     )
@@ -305,10 +303,14 @@ def run_backtest(strategy_config):
     # ===== ACCOUNT =====
     equity = initial_equity
 
-    open_trades = []
+    open_trades_long = []
+    open_trades_short = []
     trades = []
     equity_curve = []
-    pending_entry = False  # Flag: có tín hiệu entry từ nến trước
+    pending_entry = None  # None or entry_type string: "long", "short", "rsi_long", "rsi_short"
+
+    # Check if strategy supports Long & Short (combined strategy)
+    is_combined_strategy = hasattr(strategy, 'check_entry') and strategy_type == "rf_st_rsi_combined"
 
     # Loop through ALL bars - indicators need full history context
     # But only EXECUTE trades and RECORD equity within execution range
@@ -325,75 +327,187 @@ def run_backtest(strategy_config):
         # Reset pending_entry when entering execution range for the first time
         # This ensures signals from before the range are NOT executed
         if i == execution_start_idx:
-            pending_entry = False
+            pending_entry = None
 
         # ===== EXECUTE PENDING ENTRY (at Open of current bar) =====
         # Entry tại Open của nến hiện tại nếu có tín hiệu từ nến trước
         # Only execute if we're in the execution range
-        if pending_entry and len(open_trades) < pyramiding and in_execution_range:
+        if pending_entry and in_execution_range:
             slip = slippage_ticks * tick_size
-            entry_price = price_open + slip
-            # Tính size theo Default order size, tránh over-exposure khi còn lệnh mở
-            current_exposure = sum(t["entry_price"] * t["size"] for t in open_trades)
-            base_equity = (equity - current_exposure) if compound else max(initial_equity - current_exposure, 0)
-            position_size = order_value
-            if order_type == "percent":
-                position_size = max((order_value / 100.0) * base_equity / entry_price, 0)
-            elif order_type in ["usdt", "fixed"]:
-                position_size = max(order_value / entry_price, 0)
-            entry_fee = entry_price * fee_rate * position_size
-            equity -= entry_fee
 
-            # Get entry type from strategy if available
-            entry_type = getattr(strategy, '_entry_type', 'Long')
+            # Determine side from pending_entry type
+            # Handle both formats: "Long"/"RSI Long" (new) and "long"/"rsi_long" (old)
+            pending_lower = pending_entry.lower().replace(" ", "_")
+            if pending_lower in ["long", "rsi_long"]:
+                position_side = "long"
+                open_trades_list = open_trades_long
+            else:
+                position_side = "short"
+                open_trades_list = open_trades_short
 
-            new_trade = {
-                "side": "Long",
-                "entry_type": entry_type,  # Track entry type for exit logic
-                "entry_time": time_hcm,
-                "entry_price": round(entry_price, 6),
-                "entry_fee": round(entry_fee, 6),
-                "size": position_size,
-                "notional": round(entry_price * position_size, 6),
-            }
-            open_trades.append(new_trade)
+            # Check pyramiding limit
+            if len(open_trades_list) < pyramiding:
+                # Slippage: Long buys higher, Short sells lower
+                if position_side == 'long':
+                    entry_price = price_open + slip
+                else:
+                    entry_price = price_open - slip
 
-        pending_entry = False  # Reset flag regardless of execution
+                # Tính size theo Default order size, tránh over-exposure khi còn lệnh mở
+                total_exposure = sum(t["entry_price"] * t["size"] for t in open_trades_long + open_trades_short)
+                base_equity = (equity - total_exposure) if compound else max(initial_equity - total_exposure, 0)
+                position_size = order_value
+                if order_type == "percent":
+                    position_size = max((order_value / 100.0) * base_equity / entry_price, 0)
+                elif order_type in ["usdt", "fixed"]:
+                    position_size = max(order_value / entry_price, 0)
+                entry_fee = entry_price * fee_rate * position_size
+                equity -= entry_fee
 
-        # ===== EXIT (at Close of current bar) =====
-        # Exits can happen anytime we have open trades (even if entry was before range)
-        if open_trades and strategy.check_exit(i, open_trades[-1]):
-            # đóng lần lượt theo FIFO để tách trade riêng
-            trade_to_close = open_trades.pop(0)
-            slip = slippage_ticks * tick_size
-            exit_price = price_close - slip
-            pos_size = trade_to_close.get("size", position_size)
-            gross_pnl = (exit_price - trade_to_close["entry_price"]) * pos_size
-            exit_fee = exit_price * fee_rate * pos_size
-            pnl = gross_pnl - exit_fee
-            notional = trade_to_close["entry_price"] * pos_size
-            pnl_pct = (pnl / notional) * 100 if notional else 0.0
+                new_trade = {
+                    "side": "Long" if position_side == 'long' else "Short",
+                    "entry_type": pending_entry,  # Track entry type for exit logic
+                    "entry_time": time_hcm,
+                    "entry_price": round(entry_price, 6),
+                    "entry_fee": round(entry_fee, 6),
+                    "size": position_size,
+                    "notional": round(entry_price * position_size, 6),
+                }
+                open_trades_list.append(new_trade)
 
-            equity += pnl
+        pending_entry = None  # Reset flag regardless of execution
 
-            trade_to_close.update({
-                "exit_time": time_hcm,
-                "exit_price": round(exit_price, 6),
-                "exit_fee": round(exit_fee, 6),
-                "pnl": round(pnl, 6),
-                "pnl_pct": round(pnl_pct, 6),
-                "notional": round(notional, 6),
-                "size": pos_size,
-            })
+        # ===== EXIT LOGIC =====
+        # For combined strategy, check_exit returns (exit_type, reason) or None
+        # For old strategy, check_exit returns bool
+        if is_combined_strategy:
+            # Combined strategy: check exits for all open positions
+            exit_result = strategy.check_exit(i, {})
 
-            trades.append(trade_to_close)
+            if exit_result:
+                exit_type, exit_reason = exit_result
+
+                # Determine which list to close from
+                # Handle both formats: "Long"/"RSI Long" (new) and "long"/"rsi_long" (old)
+                exit_lower = exit_type.lower().replace(" ", "_")
+                if exit_lower in ["long", "rsi_long"]:
+                    open_trades_list = open_trades_long
+                else:
+                    open_trades_list = open_trades_short
+
+                if open_trades_list:
+                    # Find the matching trade by entry_type
+                    # exit_type must match entry_type: "Long" closes "Long", "RSI Long" closes "RSI Long"
+                    trade_to_close = None
+                    trade_idx = -1
+                    for idx, trade in enumerate(open_trades_list):
+                        trade_entry_type = trade.get("entry_type", "")
+                        # Normalize both for comparison
+                        trade_entry_lower = trade_entry_type.lower().replace(" ", "_")
+                        if trade_entry_lower == exit_lower:
+                            trade_to_close = trade
+                            trade_idx = idx
+                            break
+
+                    # If no exact match found, fallback to FIFO (first trade)
+                    if trade_to_close is None:
+                        trade_to_close = open_trades_list[0]
+                        trade_idx = 0
+
+                    # Remove the matched trade from the list
+                    open_trades_list.pop(trade_idx)
+                    slip = slippage_ticks * tick_size
+                    trade_side = trade_to_close.get("side", "Long")
+
+                    # Slippage: Long sells lower, Short buys higher
+                    if trade_side == "Long":
+                        exit_price = price_close - slip
+                    else:
+                        exit_price = price_close + slip
+
+                    pos_size = trade_to_close.get("size", position_size)
+
+                    # Calculate PnL based on side
+                    if trade_side == "Long":
+                        gross_pnl = (exit_price - trade_to_close["entry_price"]) * pos_size
+                    else:
+                        gross_pnl = (trade_to_close["entry_price"] - exit_price) * pos_size
+
+                    exit_fee = exit_price * fee_rate * pos_size
+                    pnl = gross_pnl - exit_fee
+                    notional = trade_to_close["entry_price"] * pos_size
+                    pnl_pct = (pnl / notional) * 100 if notional else 0.0
+
+                    equity += pnl
+
+                    trade_to_close.update({
+                        "exit_time": time_hcm,
+                        "exit_price": round(exit_price, 6),
+                        "exit_fee": round(exit_fee, 6),
+                        "exit_reason": exit_reason,
+                        "pnl": round(pnl, 6),
+                        "pnl_pct": round(pnl_pct, 6),
+                        "notional": round(notional, 6),
+                        "size": pos_size,
+                    })
+
+                    trades.append(trade_to_close)
+        else:
+            # Old strategy: single position, check_exit returns bool
+            open_trades = open_trades_long  # Old strategy only supports long
+            if open_trades and strategy.check_exit(i, open_trades[-1]):
+                # đóng lần lượt theo FIFO để tách trade riêng
+                trade_to_close = open_trades.pop(0)
+                slip = slippage_ticks * tick_size
+                trade_side = trade_to_close.get("side", "Long")
+
+                # Slippage: Long sells lower, Short buys higher
+                if trade_side == "Long":
+                    exit_price = price_close - slip
+                else:
+                    exit_price = price_close + slip
+
+                pos_size = trade_to_close.get("size", position_size)
+
+                # Calculate PnL based on side
+                if trade_side == "Long":
+                    gross_pnl = (exit_price - trade_to_close["entry_price"]) * pos_size
+                else:
+                    gross_pnl = (trade_to_close["entry_price"] - exit_price) * pos_size
+
+                exit_fee = exit_price * fee_rate * pos_size
+                pnl = gross_pnl - exit_fee
+                notional = trade_to_close["entry_price"] * pos_size
+                pnl_pct = (pnl / notional) * 100 if notional else 0.0
+
+                equity += pnl
+
+                trade_to_close.update({
+                    "exit_time": time_hcm,
+                    "exit_price": round(exit_price, 6),
+                    "exit_fee": round(exit_fee, 6),
+                    "pnl": round(pnl, 6),
+                    "pnl_pct": round(pnl_pct, 6),
+                    "notional": round(notional, 6),
+                    "size": pos_size,
+                })
+
+                trades.append(trade_to_close)
 
         # ===== CHECK ENTRY SIGNAL (will execute at Open of next bar) =====
         # IMPORTANT: Only check entry signals if we're in the execution range
         # This matches TradingView behavior - signals from before range are NOT considered
         # Indicators are still calculated on full history for proper warm-up
-        if in_execution_range and strategy.check_entry(i) and len(open_trades) < pyramiding and not pending_entry:
-            pending_entry = True
+        if in_execution_range and pending_entry is None:
+            if is_combined_strategy:
+                # Combined strategy: check_entry returns entry type string or None
+                entry_signal = strategy.check_entry(i)
+                if entry_signal:
+                    pending_entry = entry_signal
+            else:
+                # Old strategy: check_entry returns bool
+                if strategy.check_entry(i) and len(open_trades_long) < pyramiding:
+                    pending_entry = "long"
 
         # Only record equity curve for bars in execution range
         if in_execution_range:
@@ -403,13 +517,21 @@ def run_backtest(strategy_config):
             })
 
     # Đóng vị thế còn mở tại giá cuối cùng (nếu có)
-    if open_trades:
+    all_open_trades = open_trades_long + open_trades_short
+    if all_open_trades:
         slip = slippage_ticks * tick_size
-        exit_price = price_close - slip
-        while open_trades:
-            trade_to_close = open_trades.pop(0)
+        for trade_to_close in all_open_trades:
+            trade_side = trade_to_close.get("side", "Long")
             pos_size = trade_to_close.get("size", position_size)
-            gross_pnl = (exit_price - trade_to_close["entry_price"]) * pos_size
+
+            # Slippage: Long sells lower, Short buys higher
+            if trade_side == "Long":
+                exit_price = price_close - slip
+                gross_pnl = (exit_price - trade_to_close["entry_price"]) * pos_size
+            else:
+                exit_price = price_close + slip
+                gross_pnl = (trade_to_close["entry_price"] - exit_price) * pos_size
+
             exit_fee = exit_price * fee_rate * pos_size
             pnl = gross_pnl - exit_fee
             notional = trade_to_close["entry_price"] * pos_size
@@ -421,6 +543,7 @@ def run_backtest(strategy_config):
                 "exit_time": time_hcm,
                 "exit_price": round(exit_price, 6),
                 "exit_fee": round(exit_fee, 6),
+                "exit_reason": "EOD",  # End of data
                 "pnl": round(pnl, 6),
                 "pnl_pct": round(pnl_pct, 6),
                 "notional": round(notional, 6),
@@ -436,7 +559,12 @@ def run_backtest(strategy_config):
         initial_equity=initial_equity
     )
 
-    return {
+    # Get debug events from strategy if available
+    debug_events = []
+    if hasattr(strategy, 'get_debug_events'):
+        debug_events = strategy.get_debug_events()
+
+    result = {
         "meta": {
             "strategyId": f"{strategy_type}_v1",
             "strategyName": strategy_type,
@@ -447,6 +575,12 @@ def run_backtest(strategy_config):
         "equityCurve": equity_curve,
         "trades": trades
     }
+
+    # Only include debug_events if there are any
+    if debug_events:
+        result["debug_events"] = debug_events
+
+    return result
 
 
 if __name__ == "__main__":

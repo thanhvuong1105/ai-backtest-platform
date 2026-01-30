@@ -1,19 +1,16 @@
 # =============================================================================
-# DOCKER COMPOSE - OPTIMIZED FOR 8 vCPU, 32GB RAM, 20+ WORKERS
+# DOCKER COMPOSE - OPTIMIZED FOR MAC MINI M4 (16GB RAM)
 # =============================================================================
 # Performance targets:
-# - Concurrent backtests: 20 simultaneous
-# - GA evaluations: 20 parallel fitness calculations
-# - Memory efficiency: 85% utilization (28GB active)
-# - CPU efficiency: 90%+ utilization during optimization
+# - Safe memory usage: ~10GB for Docker (leave 6GB for macOS)
+# - Concurrent backtests: 4 simultaneous
+# - GA evaluations: 4 parallel fitness calculations
+# - Memory efficiency: 60% utilization
 # =============================================================================
-
-version: "3.8"
 
 services:
   # ===========================================================================
   # REDIS - Message broker and result backend
-  # Optimized for high concurrency
   # ===========================================================================
   redis:
     image: redis:7-alpine
@@ -24,11 +21,11 @@ services:
       - redis-data:/data
     command: >
       redis-server
-      --maxmemory 2gb
+      --maxmemory 512mb
       --maxmemory-policy allkeys-lru
       --appendonly yes
-      --tcp-backlog 511
-      --maxclients 10000
+      --tcp-backlog 128
+      --maxclients 1000
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -38,47 +35,39 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
-          cpus: '1'
-        reservations:
           memory: 512M
-          cpus: '0.5'
+        reservations:
+          memory: 256M
 
   # ===========================================================================
   # BACKEND - FastAPI server
-  # Optimized with Gunicorn + Uvicorn workers
   # ===========================================================================
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      args:
-        - BUILDKIT_INLINE_CACHE=1
     container_name: quant-brain-backend
     ports:
       - "8000:8000"
     environment:
-      # Redis
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      # Server
       - FASTAPI_HOST=0.0.0.0
       - FASTAPI_PORT=8000
       - PROJECT_ROOT=/app
       - PYTHONUNBUFFERED=1
-      # Performance
-      - GUNICORN_WORKERS=4
+      - GUNICORN_WORKERS=2
       - GUNICORN_THREADS=2
     command: >
       gunicorn app.main:app
-      --workers 4
+      --workers 2
       --worker-class uvicorn.workers.UvicornWorker
       --bind 0.0.0.0:8000
       --timeout 120
       --keep-alive 5
-      --max-requests 1000
-      --max-requests-jitter 100
+      --max-requests 500
+      --max-requests-jitter 50
     volumes:
       - ./engine/data:/app/engine/data:ro
     depends_on:
@@ -93,31 +82,27 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
-          cpus: '2'
+          memory: 1G
         reservations:
           memory: 512M
-          cpus: '1'
 
   # ===========================================================================
   # CELERY WORKER - Background task processor
-  # OPTIMIZED FOR 20+ CONCURRENT WORKERS
+  # OPTIMIZED FOR MAC MINI M4 16GB RAM
   # ===========================================================================
   celery:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      args:
-        - BUILDKIT_INLINE_CACHE=1
     container_name: quant-brain-celery
     command: >
       celery -A app.services.celery_app.celery worker
       --loglevel=info
       -Q default,backtest,optimization,ai_agent,quant_brain
-      --concurrency=${CELERY_CONCURRENCY:-20}
+      --concurrency=6
       --pool=prefork
-      --max-memory-per-child=512000
-      --max-tasks-per-child=100
+      --max-memory-per-child=256000
+      --max-tasks-per-child=50
     environment:
       # Redis
       - REDIS_URL=redis://redis:6379/0
@@ -127,68 +112,68 @@ services:
       - PYTHONUNBUFFERED=1
 
       # =========================================================================
-      # SERVER SPECIFICATIONS
+      # MAC MINI M4 SPECIFICATIONS (16GB RAM)
       # =========================================================================
-      - CPU_COUNT=8
-      - TOTAL_RAM_GB=32
-      - MIN_WORKERS=20
-      - MAX_WORKERS=32
+      - CPU_COUNT=6
+      - TOTAL_RAM_GB=16
+      - MIN_WORKERS=4
+      - MAX_WORKERS=6
 
       # =========================================================================
-      # CELERY WORKER SETTINGS - 20+ WORKERS
+      # CELERY WORKER SETTINGS - 6 WORKERS FOR 16GB
       # =========================================================================
-      - CELERY_CONCURRENCY=20
-      - CELERY_PREFETCH=2
+      - CELERY_CONCURRENCY=6
+      - CELERY_PREFETCH=1
       - CELERY_POOL=prefork
-      - WORKER_MAX_MEMORY_KB=512000
-      - WORKER_MAX_TASKS=100
-      - BROKER_POOL_LIMIT=20
+      - WORKER_MAX_MEMORY_KB=256000
+      - WORKER_MAX_TASKS=50
+      - BROKER_POOL_LIMIT=15
 
       # =========================================================================
-      # PARALLEL PROCESSING
+      # PARALLEL PROCESSING - 6 WORKERS FOR 16GB
       # =========================================================================
-      - MAX_PARALLEL_RUNS=2000
-      - MAX_THREAD_WORKERS=24
-      - PROCESS_WORKERS=8
+      - MAX_PARALLEL_RUNS=300
+      - MAX_THREAD_WORKERS=6
+      - PROCESS_WORKERS=4
       - PARALLEL_FITNESS=true
 
       # =========================================================================
-      # GENETIC ALGORITHM - OPTIMIZED
+      # GENETIC ALGORITHM - 6 WORKERS
       # =========================================================================
-      - GENOME_POPULATION_SIZE=100
-      - GENOME_GENERATIONS=10
-      - GA_PARALLEL_EVALUATIONS=20
+      - GENOME_POPULATION_SIZE=30
+      - GENOME_GENERATIONS=5
+      - GA_PARALLEL_EVALUATIONS=6
       - GENOME_MUTATION_RATE=0.15
       - GENOME_CROSSOVER_RATE=0.8
-      - GENOME_ELITE_COUNT=5
+      - GENOME_ELITE_COUNT=3
 
       # =========================================================================
-      # MEMORY MANAGEMENT (28GB available)
+      # MEMORY MANAGEMENT (10GB available for Docker)
       # =========================================================================
-      - MAX_MEMORY_GB=28
-      - DATA_CACHE_GB=12
-      - MODEL_CACHE_GB=6
+      - MAX_MEMORY_GB=8
+      - DATA_CACHE_GB=2
+      - MODEL_CACHE_GB=1
 
       # =========================================================================
-      # CACHE SETTINGS
+      # CACHE SETTINGS - REDUCED
       # =========================================================================
-      - INDICATOR_CACHE_SIZE=4096
-      - DATA_CACHE_SIZE=1024
-      - INDICATOR_RESULT_CACHE_SIZE=2048
-      - REDIS_POOL_SIZE=50
+      - INDICATOR_CACHE_SIZE=1024
+      - DATA_CACHE_SIZE=256
+      - INDICATOR_RESULT_CACHE_SIZE=512
+      - REDIS_POOL_SIZE=20
       - DATA_PRELOAD=true
       - PROGRESS_BATCH_SIZE=1
 
       # =========================================================================
       # NUMBA/NUMPY OPTIMIZATION
       # =========================================================================
-      - NUMBA_NUM_THREADS=8
+      - NUMBA_NUM_THREADS=4
       - USE_FAST_STRATEGY=true
       - NUMBA_CACHE_DIR=/tmp/numba_cache
-      - OMP_NUM_THREADS=8
-      - MKL_NUM_THREADS=8
-      - NUMEXPR_NUM_THREADS=8
-      - OPENBLAS_NUM_THREADS=8
+      - OMP_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+      - NUMEXPR_NUM_THREADS=4
+      - OPENBLAS_NUM_THREADS=4
 
       # =========================================================================
       # PYTHON OPTIMIZATION
@@ -198,28 +183,28 @@ services:
       - MALLOC_ARENA_MAX=2
 
       # =========================================================================
-      # ROBUSTNESS TESTING
+      # ROBUSTNESS TESTING - REDUCED
       # =========================================================================
-      - MONTE_CARLO_RUNS=500
-      - WALK_FORWARD_WINDOWS=3
+      - MONTE_CARLO_RUNS=100
+      - WALK_FORWARD_WINDOWS=2
 
       # =========================================================================
-      # AUTO-TUNING
+      # AUTO-TUNING - MORE AGGRESSIVE MEMORY LIMITS
       # =========================================================================
       - AUTO_TUNING_ENABLED=true
-      - AUTO_TUNING_INTERVAL=10
-      - TUNING_COOLDOWN_SEC=15
-      - TUNING_MEMORY_HIGH_PCT=85
-      - TUNING_MEMORY_SAFE_PCT=75
-      - TUNING_CPU_HIGH_PCT=95
-      - TUNING_MIN_WORKERS=10
-      - TUNING_MAX_WORKERS=24
+      - AUTO_TUNING_INTERVAL=5
+      - TUNING_COOLDOWN_SEC=10
+      - TUNING_MEMORY_HIGH_PCT=70
+      - TUNING_MEMORY_SAFE_PCT=60
+      - TUNING_CPU_HIGH_PCT=85
+      - TUNING_MIN_WORKERS=4
+      - TUNING_MAX_WORKERS=6
 
       # =========================================================================
-      # TIMEOUTS
+      # TIMEOUTS - UNLIMITED
       # =========================================================================
-      - JOB_TIMEOUT_SEC=3600
-      - MAX_STDOUT_SIZE=20971520
+      - JOB_TIMEOUT_SEC=0
+      - MAX_STDOUT_SIZE=10485760
 
     volumes:
       - ./engine/data:/app/engine/data:ro
@@ -231,11 +216,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 28G
-          cpus: '8'
+          memory: 8G
         reservations:
-          memory: 16G
-          cpus: '4'
+          memory: 2G
 
   # ===========================================================================
   # FRONTEND - React app served by nginx
@@ -245,8 +228,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - BUILDKIT_INLINE_CACHE=1
-        - NODE_OPTIONS=--max_old_space_size=2048
+        - NODE_OPTIONS=--max_old_space_size=1024
     container_name: quant-brain-frontend
     ports:
       - "3000:80"
@@ -257,36 +239,8 @@ services:
       resources:
         limits:
           memory: 256M
-          cpus: '0.5'
         reservations:
           memory: 64M
-
-  # ===========================================================================
-  # FLOWER - Celery monitoring
-  # ===========================================================================
-  flower:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: quant-brain-flower
-    command: celery -A app.services.celery_app.celery flower --port=5555 --persistent=True
-    ports:
-      - "5555:5555"
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-    depends_on:
-      redis:
-        condition: service_healthy
-    profiles:
-      - monitoring
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: '0.25'
 
 volumes:
   redis-data:

@@ -381,6 +381,118 @@ def get_param_bounds() -> Dict[str, Any]:
     return PARAM_BOUNDS
 
 
+def extract_param_bounds_from_config_combined(cfg: Dict[str, Any]) -> Dict[str, Dict[str, Tuple[float, float]]]:
+    """
+    Extract parameter bounds from Dashboard config for rf_st_rsi_combined strategy.
+
+    Dashboard format for combined:
+    {
+        "st_atrPeriod": {"start": 8, "end": 14},  # Entry
+        "sl_long_st_atrPeriod": {"start": 10, "end": 20},
+        "sl_short_st_atrPeriod": {"start": 10, "end": 20},
+        "tp_dual_long_st_atrPeriod": {"start": 10, "end": 20},
+        ...
+    }
+
+    Returns bounds dict compatible with Combined genome structure:
+    {
+        "entry": {"st_atrPeriod": (8, 14), ...},
+        "sl_long": {"st_atrPeriod": (10, 20), ...},
+        "sl_short": {"st_atrPeriod": (10, 20), ...},
+        "tp_dual_long": {"st_atrPeriod": (10, 20), ...},
+        "tp_dual_short": {...},
+        "tp_rsi_long": {...},
+        "tp_rsi_short": {...},
+    }
+    """
+    bounds = {
+        "entry": {},
+        "sl_long": {},
+        "sl_short": {},
+        "tp_dual_long": {},
+        "tp_dual_short": {},
+        "tp_rsi_long": {},
+        "tp_rsi_short": {},
+    }
+
+    # Mapping: Dashboard param name → (block, genome param name)
+    param_mapping = {
+        # Entry (shared)
+        "st_atrPeriod": ("entry", "st_atrPeriod"),
+        "st_mult": ("entry", "st_mult"),
+        "rf_period": ("entry", "rf_period"),
+        "rf_mult": ("entry", "rf_mult"),
+        "rsi_length": ("entry", "rsi_length"),
+        "rsi_ma_length": ("entry", "rsi_ma_length"),
+        "dualFlipBarsLong": ("entry", "dualFlipBarsLong"),
+        "dualFlipBarsShort": ("entry", "dualFlipBarsShort"),
+
+        # SL Long
+        "sl_long_st_atrPeriod": ("sl_long", "st_atrPeriod"),
+        "sl_long_st_mult": ("sl_long", "st_mult"),
+        "sl_long_rf_period": ("sl_long", "rf_period"),
+        "sl_long_rf_mult": ("sl_long", "rf_mult"),
+
+        # SL Short
+        "sl_short_st_atrPeriod": ("sl_short", "st_atrPeriod"),
+        "sl_short_st_mult": ("sl_short", "st_mult"),
+        "sl_short_rf_period": ("sl_short", "rf_period"),
+        "sl_short_rf_mult": ("sl_short", "rf_mult"),
+
+        # TP Dual Long
+        "tp_dual_long_st_atrPeriod": ("tp_dual_long", "st_atrPeriod"),
+        "tp_dual_long_st_mult": ("tp_dual_long", "st_mult"),
+        "tp_dual_long_rr_mult": ("tp_dual_long", "rr_mult"),
+
+        # TP Dual Short
+        "tp_dual_short_st_atrPeriod": ("tp_dual_short", "st_atrPeriod"),
+        "tp_dual_short_st_mult": ("tp_dual_short", "st_mult"),
+        "tp_dual_short_rr_mult": ("tp_dual_short", "rr_mult"),
+
+        # TP RSI Long
+        "tp_rsi_long_st_atrPeriod": ("tp_rsi_long", "st_atrPeriod"),
+        "tp_rsi_long_st_mult": ("tp_rsi_long", "st_mult"),
+        "tp_rsi_long_rr_mult": ("tp_rsi_long", "rr_mult"),
+
+        # TP RSI Short
+        "tp_rsi_short_st_atrPeriod": ("tp_rsi_short", "st_atrPeriod"),
+        "tp_rsi_short_st_mult": ("tp_rsi_short", "st_mult"),
+        "tp_rsi_short_rr_mult": ("tp_rsi_short", "rr_mult"),
+    }
+
+    # Extract bounds from config
+    param_bounds_source = cfg.get("paramBounds", cfg)
+
+    for dashboard_param, (block, genome_param) in param_mapping.items():
+        if dashboard_param in param_bounds_source and isinstance(param_bounds_source[dashboard_param], dict):
+            param_config = param_bounds_source[dashboard_param]
+            start = param_config.get("start")
+            end = param_config.get("end")
+
+            if start is not None and end is not None:
+                min_val = min(float(start), float(end))
+                max_val = max(float(start), float(end))
+
+                # Expand bounds slightly to allow mutation beyond range
+                range_size = max_val - min_val
+                expansion = max(range_size * 0.2, 1.0)
+
+                min_val = max(0.1, min_val - expansion)  # Don't go below 0.1
+                max_val = max_val + expansion
+
+                bounds[block][genome_param] = (min_val, max_val)
+
+    # Merge with default bounds for missing params
+    for block in bounds:
+        if block in PARAM_BOUNDS_COMBINED:
+            for param, default_bound in PARAM_BOUNDS_COMBINED[block].items():
+                if param not in bounds[block]:
+                    bounds[block][param] = default_bound
+
+    logger.info(f"Extracted combined param bounds from config: {bounds}")
+    return bounds
+
+
 # ═══════════════════════════════════════════════════════
 # AUTO-EXPAND BOUNDS FROM MEMORY
 # ═══════════════════════════════════════════════════════
@@ -558,6 +670,233 @@ def get_effective_bounds(
         bounds = expand_bounds_from_memory(memory_genomes, bounds)
 
     return bounds
+
+
+# ═══════════════════════════════════════════════════════
+# RF + ST + RSI COMBINED STRATEGY SUPPORT
+# ═══════════════════════════════════════════════════════
+
+# Genome structure for rf_st_rsi_combined (Long & Short params)
+PARAM_BOUNDS_COMBINED = {
+    "entry": {
+        "st_atrPeriod": (1, 50),
+        "st_mult": (0.5, 30.0),
+        "rf_period": (1, 200),
+        "rf_mult": (1.0, 30.0),
+        "rsi_length": (5, 30),
+        "rsi_ma_length": (2, 20),
+        "dualFlipBarsLong": (1, 30),
+        "dualFlipBarsShort": (1, 30),
+    },
+    "sl_long": {
+        "st_atrPeriod": (1, 30),
+        "st_mult": (1.0, 30.0),
+        "rf_period": (1, 200),
+        "rf_mult": (1.0, 30.0),
+    },
+    "sl_short": {
+        "st_atrPeriod": (1, 30),
+        "st_mult": (1.0, 30.0),
+        "rf_period": (1, 200),
+        "rf_mult": (1.0, 30.0),
+    },
+    "tp_dual_long": {
+        "st_atrPeriod": (1, 30),
+        "st_mult": (1.0, 30.0),
+        "rr_mult": (0.1, 5.0),
+    },
+    "tp_dual_short": {
+        "st_atrPeriod": (1, 30),
+        "st_mult": (1.0, 30.0),
+        "rr_mult": (0.1, 5.0),
+    },
+    "tp_rsi_long": {
+        "st_atrPeriod": (1, 30),
+        "st_mult": (1.0, 30.0),
+        "rr_mult": (0.1, 5.0),
+    },
+    "tp_rsi_short": {
+        "st_atrPeriod": (1, 30),
+        "st_mult": (1.0, 30.0),
+        "rr_mult": (0.1, 5.0),
+    },
+}
+
+
+# Coherence rules for rf_st_rsi_combined
+COHERENCE_RULES_COMBINED = [
+    # Entry genome coherence
+    {
+        "name": "rsi_ma_vs_rsi_length",
+        "rule": lambda g: g["entry"]["rsi_ma_length"] <= g["entry"]["rsi_length"],
+        "message": "RSI MA length must be <= RSI length"
+    },
+    {
+        "name": "st_mult_range",
+        "rule": lambda g: 0.5 <= g["entry"]["st_mult"] <= 30.0,
+        "message": "ST multiplier should be between 0.5 and 30.0"
+    },
+    {
+        "name": "rf_mult_range",
+        "rule": lambda g: 1.0 <= g["entry"]["rf_mult"] <= 30.0,
+        "message": "RF multiplier should be between 1.0 and 30.0"
+    },
+
+    # Long/Short TP coherence - RR range 0.1-5.0
+    {
+        "name": "tp_dual_long_rr_range",
+        "rule": lambda g: 0.1 <= g["tp_dual_long"]["rr_mult"] <= 5.0,
+        "message": "Dual Flip Long RR should be between 0.1 and 5.0"
+    },
+    {
+        "name": "tp_rsi_long_rr_range",
+        "rule": lambda g: 0.1 <= g["tp_rsi_long"]["rr_mult"] <= 5.0,
+        "message": "RSI Long RR should be between 0.1 and 5.0"
+    },
+    {
+        "name": "tp_dual_short_rr_range",
+        "rule": lambda g: 0.1 <= g["tp_dual_short"]["rr_mult"] <= 5.0,
+        "message": "Dual Flip Short RR should be between 0.1 and 5.0"
+    },
+    {
+        "name": "tp_rsi_short_rr_range",
+        "rule": lambda g: 0.1 <= g["tp_rsi_short"]["rr_mult"] <= 5.0,
+        "message": "RSI Short RR should be between 0.1 and 5.0"
+    },
+
+    # Mode coherence
+    {
+        "name": "at_least_one_mode",
+        "rule": lambda g: g["mode"]["showDualFlip"] or g["mode"]["showRSI"],
+        "message": "At least one entry mode must be enabled"
+    },
+    {
+        "name": "at_least_one_position_type",
+        "rule": lambda g: g["mode"]["enableLong"] or g["mode"]["enableShort"],
+        "message": "At least one position type (Long or Short) must be enabled"
+    },
+]
+
+
+def validate_genome_combined(genome: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """
+    Validate a combined strategy genome against all coherence rules.
+
+    Args:
+        genome: Structured genome dictionary with entry, sl_long, sl_short,
+                tp_dual_long, tp_dual_short, tp_rsi_long, tp_rsi_short, mode
+
+    Returns:
+        (is_valid, list_of_violations)
+    """
+    violations = []
+
+    # Ensure genome has required structure
+    required_blocks = ["entry", "sl_long", "sl_short", "tp_dual_long", "tp_dual_short",
+                       "tp_rsi_long", "tp_rsi_short", "mode"]
+    for block in required_blocks:
+        if block not in genome:
+            violations.append(f"Missing genome block: {block}")
+            return False, violations
+
+    # Check each rule
+    for rule_def in COHERENCE_RULES_COMBINED:
+        try:
+            if not rule_def["rule"](genome):
+                violations.append(f"[{rule_def['name']}] {rule_def['message']}")
+        except (KeyError, TypeError) as e:
+            violations.append(f"[{rule_def['name']}] Rule check failed: {e}")
+
+    is_valid = len(violations) == 0
+    return is_valid, violations
+
+
+def repair_genome_combined(genome: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Attempt to repair a combined strategy genome to make it coherent.
+    Uses PARAM_BOUNDS_COMBINED for clamping values.
+
+    Args:
+        genome: Potentially invalid genome
+
+    Returns:
+        Repaired genome (may still be invalid if unfixable)
+    """
+    repaired = {
+        "entry": dict(genome.get("entry", {})),
+        "sl_long": dict(genome.get("sl_long", {})),
+        "sl_short": dict(genome.get("sl_short", {})),
+        "tp_dual_long": dict(genome.get("tp_dual_long", {})),
+        "tp_dual_short": dict(genome.get("tp_dual_short", {})),
+        "tp_rsi_long": dict(genome.get("tp_rsi_long", {})),
+        "tp_rsi_short": dict(genome.get("tp_rsi_short", {})),
+        "mode": dict(genome.get("mode", {})),
+    }
+
+    bounds = PARAM_BOUNDS_COMBINED
+
+    # Fix: RSI MA <= RSI length
+    if repaired["entry"].get("rsi_ma_length", 6) > repaired["entry"].get("rsi_length", 14):
+        repaired["entry"]["rsi_ma_length"] = repaired["entry"]["rsi_length"] - 2
+
+    # Fix: At least one mode enabled
+    if not repaired["mode"].get("showDualFlip") and not repaired["mode"].get("showRSI"):
+        repaired["mode"]["showDualFlip"] = True
+
+    # Fix: At least one position type enabled
+    if not repaired["mode"].get("enableLong") and not repaired["mode"].get("enableShort"):
+        repaired["mode"]["enableLong"] = True
+        repaired["mode"]["enableShort"] = True
+
+    # Clamp all values to PARAM_BOUNDS_COMBINED
+    for block, block_bounds in bounds.items():
+        if block not in repaired:
+            continue
+        for param, (min_val, max_val) in block_bounds.items():
+            if param in repaired[block]:
+                val = repaired[block][param]
+                if isinstance(val, (int, float)):
+                    repaired[block][param] = max(min_val, min(max_val, val))
+
+    return repaired
+
+
+def clamp_to_bounds_combined(genome: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Clamp all combined strategy genome parameters to valid bounds.
+
+    Args:
+        genome: Input genome
+
+    Returns:
+        Genome with all params clamped to bounds
+    """
+    clamped = {
+        "entry": dict(genome.get("entry", {})),
+        "sl_long": dict(genome.get("sl_long", {})),
+        "sl_short": dict(genome.get("sl_short", {})),
+        "tp_dual_long": dict(genome.get("tp_dual_long", {})),
+        "tp_dual_short": dict(genome.get("tp_dual_short", {})),
+        "tp_rsi_long": dict(genome.get("tp_rsi_long", {})),
+        "tp_rsi_short": dict(genome.get("tp_rsi_short", {})),
+        "mode": dict(genome.get("mode", {})),
+    }
+
+    for block, bounds in PARAM_BOUNDS_COMBINED.items():
+        if block not in clamped:
+            continue
+        for param, (min_val, max_val) in bounds.items():
+            if param in clamped[block]:
+                val = clamped[block][param]
+                if isinstance(val, (int, float)):
+                    clamped[block][param] = max(min_val, min(max_val, val))
+
+    return clamped
+
+
+def is_combined_strategy(strategy_type: str) -> bool:
+    """Check if strategy type is combined (Long/Short separate params)."""
+    return strategy_type == "rf_st_rsi_combined"
 
 
 # ═══════════════════════════════════════════════════════

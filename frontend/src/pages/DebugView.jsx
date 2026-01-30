@@ -70,6 +70,98 @@ const STRATEGY_SCHEMAS = {
       },
     ],
   },
+  rf_st_rsi_combined: {
+    name: "RF + ST + RSI Combined (Long & Short)",
+    groups: [
+      {
+        label: "Enable Settings",
+        params: [
+          { key: "enableLong", label: "Enable Long Trading", type: "bool", default: true },
+          { key: "enableShort", label: "Enable Short Trading", type: "bool", default: true },
+        ],
+      },
+      {
+        label: "Entry Settings",
+        params: [
+          { key: "showEntryLong", label: "Enable Dual Flip Long", type: "bool", default: true },
+          { key: "showEntryShort", label: "Enable Dual Flip Short", type: "bool", default: true },
+          { key: "showEntryRSI_L", label: "Enable RSI Long", type: "bool", default: true },
+          { key: "showEntryRSI_S", label: "Enable RSI Short", type: "bool", default: true },
+          { key: "dualFlipBarsLong", label: "Dual Flip Bars (Long)", type: "int", default: 8, min: 1, max: 50 },
+          { key: "dualFlipBarsShort", label: "Dual Flip Bars (Short)", type: "int", default: 12, min: 1, max: 50 },
+          { key: "st_atrPeriod", label: "ST ATR Period", type: "int", default: 10, min: 1, max: 100 },
+          { key: "st_src", label: "ST Source", type: "select", default: "hl2", options: ["close", "hl2", "hlc3", "ohlc4"] },
+          { key: "st_mult", label: "ST ATR Mult", type: "float", default: 2.0, min: 0.1, max: 10, step: 0.1 },
+          { key: "st_changeATR", label: "ST use ATR?", type: "bool", default: true },
+          { key: "rf_src_in", label: "RF Source", type: "select", default: "close", options: ["close", "hl2", "hlc3", "ohlc4"] },
+          { key: "rf_period", label: "RF Period", type: "int", default: 100, min: 1, max: 500 },
+          { key: "rf_mult", label: "RF Multiplier", type: "float", default: 3.0, min: 0.1, max: 20, step: 0.1 },
+          { key: "lenRSI", label: "RSI Length", type: "int", default: 14, min: 1, max: 100 },
+          { key: "lenMA", label: "MA Length on RSI", type: "int", default: 6, min: 1, max: 50 },
+        ],
+      },
+      {
+        label: "Stop Loss - Long",
+        params: [
+          { key: "st_sl_atrPeriod_L", label: "ST SL ATR Period", type: "int", default: 10, min: 1, max: 100 },
+          { key: "st_sl_src_L", label: "ST SL Source", type: "select", default: "hl2", options: ["close", "hl2", "hlc3", "ohlc4"] },
+          { key: "st_sl_mult_L", label: "ST SL Mult", type: "float", default: 3.0, min: 0.1, max: 20, step: 0.1 },
+          { key: "st_sl_useATR_L", label: "ST SL use ATR?", type: "bool", default: true },
+          { key: "rf_sl_period_L", label: "RF SL Period", type: "int", default: 20, min: 1, max: 500 },
+          { key: "rf_sl_mult_L", label: "RF SL Multiplier", type: "float", default: 15.0, min: 0.1, max: 50, step: 0.1 },
+        ],
+      },
+      {
+        label: "Stop Loss - Short",
+        params: [
+          { key: "st_sl_atrPeriod_S", label: "ST SL ATR Period", type: "int", default: 10, min: 1, max: 100 },
+          { key: "st_sl_src_S", label: "ST SL Source", type: "select", default: "hl2", options: ["close", "hl2", "hlc3", "ohlc4"] },
+          { key: "st_sl_mult_S", label: "ST SL Mult", type: "float", default: 2.0, min: 0.1, max: 20, step: 0.1 },
+          { key: "st_sl_useATR_S", label: "ST SL use ATR?", type: "bool", default: true },
+          { key: "rf_sl_period_S", label: "RF SL Period", type: "int", default: 20, min: 1, max: 500 },
+          { key: "rf_sl_mult_S", label: "RF SL Multiplier", type: "float", default: 3.0, min: 0.1, max: 50, step: 0.1 },
+        ],
+      },
+      {
+        label: "Take Profit - Dual Flip Long",
+        params: [
+          { key: "st_tp_dual_period_L", label: "ST TP ATR Period", type: "int", default: 10, min: 1, max: 100 },
+          { key: "st_tp_dual_mult_L", label: "ST TP Mult", type: "float", default: 2.0, min: 0.1, max: 10, step: 0.1 },
+          { key: "rr_mult_dual_L", label: "TP R:R Mult", type: "float", default: 4.0, min: 0.1, max: 20, step: 0.1 },
+        ],
+      },
+      {
+        label: "Take Profit - Dual Flip Short",
+        params: [
+          { key: "st_tp_dual_period_S", label: "ST TP ATR Period", type: "int", default: 10, min: 1, max: 100 },
+          { key: "st_tp_dual_mult_S", label: "ST TP Mult", type: "float", default: 2.0, min: 0.1, max: 10, step: 0.1 },
+          { key: "rr_mult_dual_S", label: "TP R:R Mult", type: "float", default: 0.75, min: 0.1, max: 20, step: 0.1 },
+        ],
+      },
+      {
+        label: "Take Profit - RSI Long",
+        params: [
+          { key: "st_tp_rsi1_period_L", label: "ST TP ATR Period", type: "int", default: 10, min: 1, max: 100 },
+          { key: "st_tp_rsi1_mult_L", label: "ST TP Mult", type: "float", default: 2.0, min: 0.1, max: 10, step: 0.1 },
+          { key: "rr_mult_rsi1_L", label: "TP R:R Mult", type: "float", default: 4.0, min: 0.1, max: 20, step: 0.1 },
+        ],
+      },
+      {
+        label: "Take Profit - RSI Short",
+        params: [
+          { key: "st_tp_rsi1_period_S", label: "ST TP ATR Period", type: "int", default: 10, min: 1, max: 100 },
+          { key: "st_tp_rsi1_mult_S", label: "ST TP Mult", type: "float", default: 2.0, min: 0.1, max: 10, step: 0.1 },
+          { key: "rr_mult_rsi1_S", label: "TP R:R Mult", type: "float", default: 0.75, min: 0.1, max: 20, step: 0.1 },
+        ],
+      },
+      {
+        label: "Debug",
+        params: [
+          { key: "debug", label: "Enable Debug Logging", type: "bool", default: false },
+        ],
+      },
+    ],
+  },
 };
 
 // Get default params for a strategy
@@ -125,6 +217,23 @@ export default function DebugView() {
   const [rangePreset, setRangePreset] = useState("ALL");
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
+
+  // Legend visibility state - all hidden by default, user clicks to show
+  const [visibility, setVisibility] = useState({
+    rangeFilter: false,
+    superTrend: false,
+    rfSlShort: false,
+    stSlShort: false,
+    stTpRsiShort: false,
+    long: false,
+    short: false,
+    tp: false,
+    exitSl: false,
+  });
+
+  const toggleVisibility = (key) => {
+    setVisibility((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const handleStrategyChange = (newType) => {
     setStrategyType(newType);
@@ -197,11 +306,14 @@ export default function DebugView() {
     }, intervalMs);
 
     try {
+      // Use backendType if available (for strategies that map to same backend)
+      const backendStrategyType = schema?.backendType || strategyType;
+
       const config = {
         symbol,
         timeframe,
         strategy: {
-          type: strategyType,
+          type: backendStrategyType,
           params: strategyParams,
         },
         capital: { initial: initialCapital, orderPct: orderSize },
@@ -259,7 +371,7 @@ export default function DebugView() {
     <div style={{ minHeight: "100vh", background: "#0f0f1a", color: "#fff" }}>
       <Header />
 
-      <div style={{ padding: "24px", maxWidth: "1400px", margin: "0 auto" }}>
+      <div style={{ padding: "24px", maxWidth: "1800px", margin: "0 auto" }}>
         <h1 style={{ fontSize: "24px", marginBottom: "24px" }}>
           Debug View - Strategy Verification
         </h1>
@@ -313,7 +425,8 @@ export default function DebugView() {
                   onChange={(e) => handleStrategyChange(e.target.value)}
                   style={inputStyle}
                 >
-                  <option value="rf_st_rsi">RF + ST + RSI Divergence</option>
+                  <option value="rf_st_rsi">RF + ST + RSI Divergence (Long Only)</option>
+                  <option value="rf_st_rsi_combined">RF + ST + RSI Combined (Long & Short)</option>
                 </select>
               </div>
             </div>
@@ -666,100 +779,120 @@ export default function DebugView() {
             <Section
               title={`${chartData.symbol} · ${chartData.timeframe.toUpperCase()} · ${schema?.name || strategyType}`}
             >
+              {/* Clickable Legend */}
               <div style={{ marginBottom: "16px" }}>
                 <div
                   style={{
                     display: "flex",
-                    gap: "24px",
+                    gap: "16px",
                     color: "#9ca3af",
-                    fontSize: "14px",
+                    fontSize: "13px",
                     flexWrap: "wrap",
+                    alignItems: "center",
                   }}
                 >
+                  <span style={{ color: "#6b7280", fontSize: "12px" }}>Click to toggle:</span>
                   {strategyType === "ema_cross" && (
                     <>
-                      <span>
-                        <span
-                          style={{
-                            display: "inline-block",
-                            width: "12px",
-                            height: "3px",
-                            background: "#f59e0b",
-                            marginRight: "8px",
-                            verticalAlign: "middle",
-                          }}
-                        />
-                        EMA Fast
-                      </span>
-                      <span>
-                        <span
-                          style={{
-                            display: "inline-block",
-                            width: "12px",
-                            height: "3px",
-                            background: "#3b82f6",
-                            marginRight: "8px",
-                            verticalAlign: "middle",
-                          }}
-                        />
-                        EMA Slow
-                      </span>
+                      <LegendItem
+                        color="#f59e0b"
+                        label="EMA Fast"
+                        type="line"
+                        active={true}
+                      />
+                      <LegendItem
+                        color="#3b82f6"
+                        label="EMA Slow"
+                        type="line"
+                        active={true}
+                      />
                     </>
                   )}
-                  {strategyType === "rf_st_rsi" && (
+                  {(strategyType === "rf_st_rsi" || strategyType === "rf_st_rsi_combined") && (
                     <>
-                      <span>
-                        <span
-                          style={{
-                            display: "inline-block",
-                            width: "12px",
-                            height: "3px",
-                            background: "#26A69A",
-                            marginRight: "8px",
-                            verticalAlign: "middle",
-                          }}
-                        />
-                        Range Filter
-                      </span>
-                      <span>
-                        <span
-                          style={{
-                            display: "inline-block",
-                            width: "12px",
-                            height: "3px",
-                            background: "#f59e0b",
-                            marginRight: "8px",
-                            verticalAlign: "middle",
-                          }}
-                        />
-                        SuperTrend
-                      </span>
+                      <LegendItem
+                        color="#26A69A"
+                        label="Range Filter"
+                        type="line"
+                        active={visibility.rangeFilter}
+                        onClick={() => toggleVisibility("rangeFilter")}
+                      />
+                      <LegendItem
+                        color="#f59e0b"
+                        label="SuperTrend"
+                        type="line"
+                        active={visibility.superTrend}
+                        onClick={() => toggleVisibility("superTrend")}
+                      />
                     </>
                   )}
-                  <span>
-                    <span style={{ color: "#2962FF", marginRight: "4px" }}>
-                      ▲
-                    </span>
-                    Long
-                  </span>
-                  <span>
-                    <span style={{ color: "#26A69A", marginRight: "4px" }}>
-                      ▼
-                    </span>
-                    TP
-                  </span>
-                  <span>
-                    <span style={{ color: "#EF5350", marginRight: "4px" }}>
-                      ▼
-                    </span>
-                    Exit/SL
-                  </span>
+                  {strategyType === "rf_st_rsi_combined" && (
+                    <>
+                      <LegendItem
+                        color="#f97316"
+                        label="RF SL Short"
+                        type="line"
+                        active={visibility.rfSlShort}
+                        onClick={() => toggleVisibility("rfSlShort")}
+                      />
+                      <LegendItem
+                        color="#ea580c"
+                        label="ST SL Short"
+                        type="line"
+                        active={visibility.stSlShort}
+                        onClick={() => toggleVisibility("stSlShort")}
+                      />
+                      <LegendItem
+                        color="#0ea5e9"
+                        label="ST TP RSI S"
+                        type="line"
+                        active={visibility.stTpRsiShort}
+                        onClick={() => toggleVisibility("stTpRsiShort")}
+                      />
+                    </>
+                  )}
+                  <LegendItem
+                    color="#00d4ff"
+                    label="Long"
+                    type="arrow"
+                    direction="up"
+                    active={visibility.long}
+                    onClick={() => toggleVisibility("long")}
+                  />
+                  {strategyType === "rf_st_rsi_combined" && (
+                    <LegendItem
+                      color="#ff00ff"
+                      label="Short"
+                      type="arrow"
+                      direction="down"
+                      active={visibility.short}
+                      onClick={() => toggleVisibility("short")}
+                    />
+                  )}
+                  <LegendItem
+                    color="#ffd700"
+                    label="TP"
+                    type="arrow"
+                    direction="down"
+                    active={visibility.tp}
+                    onClick={() => toggleVisibility("tp")}
+                  />
+                  <LegendItem
+                    color="#dc143c"
+                    label="Exit/SL"
+                    type="arrow"
+                    direction="down"
+                    active={visibility.exitSl}
+                    onClick={() => toggleVisibility("exitSl")}
+                  />
                 </div>
               </div>
               <DebugChart
                 candles={chartData.candles}
                 indicators={chartData.indicators}
                 markers={chartData.markers}
+                debugMarkers={chartData.debug?.markers}
+                visibility={visibility}
               />
             </Section>
 
@@ -827,6 +960,13 @@ export default function DebugView() {
               </div>
               <DebugTradeTable trades={chartData.trades} />
             </Section>
+
+            {/* Debug Events - RF/ST Flip Signals */}
+            {chartData.debug?.events && chartData.debug.events.length > 0 && (
+              <Section title="Debug Events - RF/ST Flip Signals">
+                <DebugEventsTable events={chartData.debug.events} />
+              </Section>
+            )}
           </>
         )}
       </div>
@@ -930,3 +1070,301 @@ const dateInputStyle = {
   color: "#fff",
   fontSize: "13px",
 };
+
+// Debug Events Table Component
+function DebugEventsTable({ events }) {
+  const [filterType, setFilterType] = useState("ALL");
+  const [filterMarker, setFilterMarker] = useState("ALL");
+  const [expanded, setExpanded] = useState(null);
+
+  // Filter options
+  const eventTypes = ["ALL", "RF_FLIP_BUY", "RF_FLIP_SELL", "ST_FLIP_BUY", "ST_FLIP_SELL", "DUALFLIP_LONG_SIGNAL", "DUALFLIP_SHORT_SIGNAL", "RSI_BULL_DIV", "RSI_BEAR_DIV"];
+  const markerTypes = ["ALL", "BUY", "SELL"];
+
+  // Apply filters
+  const filteredEvents = events.filter(e => {
+    if (filterType !== "ALL" && e.event_type !== filterType) return false;
+    if (filterMarker !== "ALL") {
+      if (filterMarker === "BUY" && e.marker_type !== "BUY") return false;
+      if (filterMarker === "SELL" && e.marker_type !== "SELL") return false;
+    }
+    return true;
+  });
+
+  // Format time from timestamp
+  const formatTime = (time) => {
+    if (typeof time === "number") {
+      const d = new Date(time);
+      return d.toISOString().replace("T", " ").slice(0, 19);
+    }
+    return String(time);
+  };
+
+  // Get badge style for marker type
+  const getMarkerBadge = (markerType, tag) => {
+    if (!markerType) return null;
+
+    const isBuy = markerType === "BUY";
+    const baseStyle = {
+      padding: "2px 8px",
+      borderRadius: "4px",
+      fontSize: "11px",
+      fontWeight: "600",
+      display: "inline-flex",
+      alignItems: "center",
+      gap: "4px",
+    };
+
+    if (isBuy) {
+      return (
+        <span style={{
+          ...baseStyle,
+          background: "rgba(34, 197, 94, 0.2)",
+          color: "#22c55e",
+          border: "1px solid rgba(34, 197, 94, 0.4)",
+        }}>
+          <span style={{ fontSize: "10px" }}>▲</span> Buy {tag && `(${tag})`}
+        </span>
+      );
+    } else {
+      return (
+        <span style={{
+          ...baseStyle,
+          background: "rgba(239, 68, 68, 0.2)",
+          color: "#ef4444",
+          border: "1px solid rgba(239, 68, 68, 0.4)",
+        }}>
+          <span style={{ fontSize: "10px" }}>▼</span> Sell {tag && `(${tag})`}
+        </span>
+      );
+    }
+  };
+
+  // Get event type badge
+  const getEventTypeBadge = (eventType, source) => {
+    const colors = {
+      "RF": { bg: "rgba(38, 166, 154, 0.2)", color: "#26A69A", border: "rgba(38, 166, 154, 0.4)" },
+      "ST": { bg: "rgba(245, 158, 11, 0.2)", color: "#f59e0b", border: "rgba(245, 158, 11, 0.4)" },
+      "DUALFLIP": { bg: "rgba(99, 102, 241, 0.2)", color: "#6366f1", border: "rgba(99, 102, 241, 0.4)" },
+      "RSI": { bg: "rgba(168, 85, 247, 0.2)", color: "#a855f7", border: "rgba(168, 85, 247, 0.4)" },
+    };
+
+    const c = colors[source] || { bg: "rgba(156, 163, 175, 0.2)", color: "#9ca3af", border: "rgba(156, 163, 175, 0.4)" };
+
+    return (
+      <span style={{
+        padding: "2px 6px",
+        borderRadius: "4px",
+        fontSize: "10px",
+        fontWeight: "500",
+        background: c.bg,
+        color: c.color,
+        border: `1px solid ${c.border}`,
+      }}>
+        {eventType}
+      </span>
+    );
+  };
+
+  return (
+    <div>
+      {/* Filters */}
+      <div style={{
+        display: "flex",
+        gap: "16px",
+        marginBottom: "16px",
+        flexWrap: "wrap",
+        alignItems: "center",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <label style={{ color: "#9ca3af", fontSize: "13px" }}>Event Type:</label>
+          <select
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value)}
+            style={{
+              padding: "6px 10px",
+              background: "#1a1a2e",
+              border: "1px solid #2d2d44",
+              borderRadius: "6px",
+              color: "#fff",
+              fontSize: "13px",
+            }}
+          >
+            {eventTypes.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <label style={{ color: "#9ca3af", fontSize: "13px" }}>Marker:</label>
+          <div style={{ display: "flex", gap: "4px" }}>
+            {markerTypes.map(m => (
+              <button
+                key={m}
+                onClick={() => setFilterMarker(m)}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid #2d2d44",
+                  background: filterMarker === m
+                    ? (m === "BUY" ? "rgba(34,197,94,0.15)" : m === "SELL" ? "rgba(239,68,68,0.15)" : "rgba(99,102,241,0.15)")
+                    : "#1a1a2e",
+                  color: filterMarker === m
+                    ? (m === "BUY" ? "#22c55e" : m === "SELL" ? "#ef4444" : "#6366f1")
+                    : "#e5e7eb",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                }}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <span style={{ color: "#9ca3af", fontSize: "13px" }}>
+          Showing {filteredEvents.length} of {events.length} events
+        </span>
+      </div>
+
+      {/* Events Table */}
+      <div style={{
+        maxHeight: "500px",
+        overflowY: "auto",
+        border: "1px solid #2d2d44",
+        borderRadius: "8px",
+      }}>
+        <table style={{
+          width: "100%",
+          borderCollapse: "collapse",
+          fontSize: "13px",
+        }}>
+          <thead>
+            <tr style={{ background: "#1a1a2e", position: "sticky", top: 0 }}>
+              <th style={thStyle}>Bar</th>
+              <th style={thStyle}>Time</th>
+              <th style={thStyle}>Price</th>
+              <th style={thStyle}>Marker</th>
+              <th style={thStyle}>Event Type</th>
+              <th style={thStyle}>Source</th>
+              <th style={thStyle}>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredEvents.slice(0, 500).map((evt, idx) => (
+              <tr
+                key={idx}
+                style={{
+                  background: evt.marker_type ? (evt.marker_type === "BUY" ? "rgba(34,197,94,0.05)" : "rgba(239,68,68,0.05)") : "transparent",
+                  borderBottom: "1px solid #2d2d44",
+                  cursor: "pointer",
+                }}
+                onClick={() => setExpanded(expanded === idx ? null : idx)}
+              >
+                <td style={tdStyle}>{evt.bar_index}</td>
+                <td style={tdStyle}>{formatTime(evt.time)}</td>
+                <td style={tdStyle}>{evt.price?.toFixed(2)}</td>
+                <td style={tdStyle}>{getMarkerBadge(evt.marker_type, evt.tag)}</td>
+                <td style={tdStyle}>{getEventTypeBadge(evt.event_type, evt.source)}</td>
+                <td style={tdStyle}>{evt.source}</td>
+                <td style={tdStyle}>
+                  {expanded === idx ? (
+                    <div style={{
+                      background: "#0f0f1a",
+                      padding: "8px",
+                      borderRadius: "4px",
+                      fontSize: "11px",
+                      maxWidth: "400px",
+                    }}>
+                      <pre style={{ margin: 0, whiteSpace: "pre-wrap", color: "#9ca3af" }}>
+                        {JSON.stringify(evt.snapshot, null, 2)}
+                      </pre>
+                    </div>
+                  ) : (
+                    <span style={{ color: "#6366f1" }}>▶ Click to expand</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {filteredEvents.length > 500 && (
+        <div style={{
+          marginTop: "8px",
+          padding: "8px",
+          background: "rgba(245,158,11,0.1)",
+          border: "1px solid rgba(245,158,11,0.3)",
+          borderRadius: "6px",
+          fontSize: "12px",
+          color: "#f59e0b",
+        }}>
+          Showing first 500 events. Use filters to narrow down results.
+        </div>
+      )}
+    </div>
+  );
+}
+
+const thStyle = {
+  padding: "12px 8px",
+  textAlign: "left",
+  color: "#9ca3af",
+  fontWeight: "500",
+  borderBottom: "1px solid #2d2d44",
+};
+
+const tdStyle = {
+  padding: "10px 8px",
+  color: "#e5e7eb",
+  verticalAlign: "top",
+};
+
+// Legend Item Component - clickable to toggle visibility
+function LegendItem({ color, label, type = "line", direction = "up", active = true, onClick }) {
+  const isClickable = !!onClick;
+
+  return (
+    <span
+      onClick={onClick}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "4px 10px",
+        borderRadius: "6px",
+        cursor: isClickable ? "pointer" : "default",
+        background: active ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.2)",
+        border: `1px solid ${active ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.05)"}`,
+        opacity: active ? 1 : 0.4,
+        transition: "all 0.15s ease",
+        userSelect: "none",
+      }}
+    >
+      {type === "line" ? (
+        <span
+          style={{
+            display: "inline-block",
+            width: "14px",
+            height: "3px",
+            background: active ? color : "#666",
+            borderRadius: "2px",
+          }}
+        />
+      ) : (
+        <span
+          style={{
+            color: active ? color : "#666",
+            fontSize: "10px",
+            lineHeight: 1,
+          }}
+        >
+          {direction === "up" ? "▲" : "▼"}
+        </span>
+      )}
+      <span style={{ color: active ? "#e5e7eb" : "#666" }}>{label}</span>
+    </span>
+  );
+}

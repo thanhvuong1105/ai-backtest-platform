@@ -49,14 +49,28 @@ export default function MemoryPage() {
   const [overlayLimit, setOverlayLimit] = useState("5");
   const [visibleSeries, setVisibleSeries] = useState({});
 
-  // Selection state for combine feature
-  const [selectedGenomeIds, setSelectedGenomeIds] = useState(new Set());
-
-  // Filters
+  // Filters - declare these first so they can be used in selection state initialization
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframe, setTimeframe] = useState("30m");
   const [selectedTimeframes, setSelectedTimeframes] = useState(["30m"]);  // Multi-TF mode
   const [multiTfMode, setMultiTfMode] = useState(false);  // Toggle for multi-TF view
+  const [strategyType, setStrategyType] = useState("rf_st_rsi");  // Strategy type filter
+
+  // Selection state for combine feature - persisted in localStorage (per strategy type)
+  const [selectedGenomeIds, setSelectedGenomeIds] = useState(() => {
+    // Load initial selection from localStorage - include strategyType in key
+    try {
+      const key = `quant_brain_selected_genomes_rf_st_rsi_BTCUSDT_30m`;  // Default values
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const genomes = JSON.parse(saved);
+        return new Set(genomes.map(g => g.genome_hash));
+      }
+    } catch (e) {
+      console.warn("Failed to load initial selection:", e);
+    }
+    return new Set();
+  });
 
   // Use ref to track previous genomes for rank comparison (avoid infinite loop)
   const prevGenomesRef = useRef([]);
@@ -139,14 +153,14 @@ export default function MemoryPage() {
     setError(null);
     try {
       // Fetch stats first
-      const statsRes = await getMemoryStats();
+      const statsRes = await getMemoryStats(strategyType);
 
       // Determine which timeframes to fetch
       const timeframesToFetch = multiTfMode ? selectedTimeframes : [timeframe];
 
       // Fetch genomes for all selected timeframes in parallel
       const genomesPromises = timeframesToFetch.map(tf =>
-        getMemoryGenomes(symbol, tf, 100)
+        getMemoryGenomes(symbol, tf, 100, strategyType)
       );
       const genomesResults = await Promise.all(genomesPromises);
 
@@ -191,7 +205,56 @@ export default function MemoryPage() {
 
         console.log(`[Memory] Loaded ${persistedNewGenomes.size} persisted NEW genomes from localStorage`);
 
-        // Find TRULY NEW genomes (not in baseline history at all)
+        // ═══════════════════════════════════════════════════════
+        // NEW LOGIC: Mark genomes as NEW based on Source (latest Run #)
+        // Supports both simple sources (e.g., 21) and compound sources (e.g., "21.22")
+        // Compound sources indicate a duplicate genome that was updated
+        // ═══════════════════════════════════════════════════════
+
+        // Helper function to extract the latest run number from source
+        // Simple: 21 -> 21
+        // Compound: "21.22" -> 22, "20.21.22" -> 22
+        const getLatestRunFromSource = (source) => {
+          if (source === null || source === undefined) return 0;
+          const sourceStr = String(source);
+          if (sourceStr.includes(".")) {
+            const parts = sourceStr.split(".");
+            return parseInt(parts[parts.length - 1], 10) || 0;
+          }
+          return parseInt(sourceStr, 10) || 0;
+        };
+
+        // Check if source is compound (has been updated as duplicate)
+        const isCompoundSource = (source) => {
+          if (source === null || source === undefined) return false;
+          return String(source).includes(".");
+        };
+
+        // Find the highest run number across all sources
+        const allLatestRuns = sortedNew.map(g => getLatestRunFromSource(g.source));
+        const maxRunNumber = Math.max(...allLatestRuns, 0);
+        console.log(`[Memory] Max run number: ${maxRunNumber}`);
+
+        // Genomes are "NEW" if:
+        // 1. Their latest run number = maxRunNumber (from latest run), OR
+        // 2. They have a compound source (e.g., "21.22") indicating they were updated as duplicate
+        const latestRunGenomeHashes = sortedNew
+          .filter((g) => {
+            if (!g.genome_hash) return false;
+            const latestRun = getLatestRunFromSource(g.source);
+            const isFromLatestRun = latestRun === maxRunNumber;
+            const isDuplicateUpdated = isCompoundSource(g.source);
+            return isFromLatestRun || isDuplicateUpdated;
+          })
+          .map((g) => g.genome_hash);
+
+        // Log compound sources for debugging
+        const compoundSources = sortedNew.filter(g => isCompoundSource(g.source));
+        console.log(`[Memory] Found ${latestRunGenomeHashes.length} genomes from latest run or with compound source`);
+        console.log(`[Memory] Compound sources (duplicates): ${compoundSources.length}`,
+          compoundSources.map(g => ({ hash: g.genome_hash?.slice(0, 8), source: g.source })));
+
+        // Also find TRULY NEW genomes (not in baseline history at all)
         const trulyNewGenomeHashes = sortedNew
           .filter((g) => g.genome_hash && baselineRankHistory[g.genome_hash] === undefined)
           .map((g) => g.genome_hash);
@@ -199,11 +262,8 @@ export default function MemoryPage() {
 
         console.log(`[Memory] Found ${trulyNewGenomeHashes.length} truly new genomes (not in baseline)`);
 
-        // Determine which genomes should show NEW badge
-        let currentNewGenomes;
-
+        // Update baseline for truly new genomes
         if (hasTrulyNewGenomes) {
-          // NEW genomes arrived - update baseline and replace NEW list
           const updatedBaseline = { ...baselineRankHistory };
           sortedNew.forEach((g, idx) => {
             const currentRank = idx + 1;
@@ -213,25 +273,21 @@ export default function MemoryPage() {
             }
           });
           saveRankHistory(updatedBaseline);
-
-          // Replace "new genomes" list with only the truly new ones
-          // This clears the OLD "new" genomes' NEW badge
-          currentNewGenomes = new Set(trulyNewGenomeHashes);
-          localStorage.setItem(persistedNewGenomesKey, JSON.stringify([...currentNewGenomes]));
-
-          console.log(`[Memory] Saved ${currentNewGenomes.size} new genomes to localStorage, cleared old NEW badges`);
-        } else {
-          // No new genomes - keep existing NEW badges from localStorage
-          currentNewGenomes = persistedNewGenomes;
-          console.log(`[Memory] No new genomes - keeping ${currentNewGenomes.size} existing NEW badges`);
         }
+
+        // Determine which genomes should show NEW badge
+        // Combine: genomes from latest run OR truly new genomes
+        const currentNewGenomes = new Set([...latestRunGenomeHashes, ...trulyNewGenomeHashes]);
+
+        // Save to localStorage for persistence
+        localStorage.setItem(persistedNewGenomesKey, JSON.stringify([...currentNewGenomes]));
+        console.log(`[Memory] Total NEW genomes: ${currentNewGenomes.size} (${latestRunGenomeHashes.length} from Run #${maxRunNumber}, ${trulyNewGenomeHashes.length} truly new)`);
 
         // Use updated baseline
         const finalBaseline = hasTrulyNewGenomes ? loadRankHistory() : baselineRankHistory;
 
         // Add rank info to genomes
-        // A genome is "NEW" if it's in the currentNewGenomes set
-        // NEW genomes can still have rank changes if they have a baseline rank
+        // A genome is "NEW" if it's from the latest run OR truly new
         const genomesWithRank = sortedNew.map((g, idx) => {
           const currentRank = idx + 1;
           const baselineRank = finalBaseline[g.genome_hash];
@@ -263,11 +319,29 @@ export default function MemoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [symbol, timeframe, multiTfMode, selectedTimeframes, loadRankHistory, saveRankHistory, loadNewGenomesList, saveNewGenomesList]);
+  }, [symbol, timeframe, multiTfMode, selectedTimeframes, strategyType, loadRankHistory, saveRankHistory, loadNewGenomesList, saveNewGenomesList]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData, resetTrigger]);
+
+  // Reload selection from localStorage when symbol/timeframe/strategyType changes
+  useEffect(() => {
+    try {
+      const key = `quant_brain_selected_genomes_${strategyType}_${symbol}_${timeframe}`;
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const genomes = JSON.parse(saved);
+        setSelectedGenomeIds(new Set(genomes.map(g => g.genome_hash)));
+        console.log(`Loaded ${genomes.length} selected genomes for ${strategyType}/${symbol}/${timeframe}`);
+      } else {
+        setSelectedGenomeIds(new Set());
+      }
+    } catch (e) {
+      console.warn("Failed to reload selection:", e);
+      setSelectedGenomeIds(new Set());
+    }
+  }, [symbol, timeframe, strategyType]);
 
   // Handle column sort click
   const handleSort = useCallback((columnKey) => {
@@ -285,6 +359,17 @@ export default function MemoryPage() {
   const sortedGenomes = useMemo(() => {
     const arr = [...genomes];
 
+    // Helper to extract the latest run number from source (handles compound sources)
+    const getLatestRunFromSource = (source) => {
+      if (source === null || source === undefined) return 0;
+      const sourceStr = String(source);
+      if (sourceStr.includes(".")) {
+        const parts = sourceStr.split(".");
+        return parseFloat(parts.join(".")) || 0;  // Parse as float to preserve order: 21.22 > 21.21 > 21
+      }
+      return parseFloat(sourceStr) || 0;
+    };
+
     arr.sort((a, b) => {
       let aVal = a[sortBy] ?? 0;
       let bVal = b[sortBy] ?? 0;
@@ -293,6 +378,10 @@ export default function MemoryPage() {
       if (sortBy === "netProfit") {
         aVal = a.netProfit ?? 0;
         bVal = b.netProfit ?? 0;
+      } else if (sortBy === "source") {
+        // Special handling for source column - convert to comparable numbers
+        aVal = getLatestRunFromSource(a.source);
+        bVal = getLatestRunFromSource(b.source);
       }
 
       // Compare
@@ -306,6 +395,42 @@ export default function MemoryPage() {
     return arr.map((g, idx) => ({ ...g, displayRank: idx + 1 }));
   }, [genomes, sortBy, sortDir]);
 
+  // Key for storing selected genomes in localStorage (for Dashboard to read)
+  // Include strategyType to separate selections between Combined and Long Only
+  const getSelectedGenomesKey = useCallback(() => {
+    return `quant_brain_selected_genomes_${strategyType}_${symbol}_${timeframe}`;
+  }, [strategyType, symbol, timeframe]);
+
+  // Save selected genomes to localStorage whenever selection changes
+  const saveSelectedGenomesToStorage = useCallback((selectedIds) => {
+    try {
+      const key = getSelectedGenomesKey();
+      const selectedGenomesList = sortedGenomes
+        .filter(g => selectedIds.has(g.genome_hash))
+        .map(g => ({
+          genome_hash: g.genome_hash,
+          genome: g.genome,
+          results: {
+            pf: g.pf,
+            winrate: g.winrate,
+            max_dd: g.maxDD,
+            net_profit: g.netProfit,
+            net_profit_pct: g.netProfitPct,
+            total_trades: g.totalTrades,
+            score: g.score,
+          },
+          equity_curve: g.equityCurve || [],
+          symbol: g.symbol || symbol,
+          timeframe: g.timeframe || timeframe,
+          source: g.source || 0,  // Include source for tracking
+        }));
+      localStorage.setItem(key, JSON.stringify(selectedGenomesList));
+      console.log(`Saved ${selectedGenomesList.length} selected genomes to localStorage`);
+    } catch (e) {
+      console.warn("Failed to save selected genomes:", e);
+    }
+  }, [getSelectedGenomesKey, sortedGenomes, symbol, timeframe]);
+
   // Selection handlers
   const toggleGenomeSelection = useCallback((genomeHash) => {
     setSelectedGenomeIds(prev => {
@@ -315,18 +440,29 @@ export default function MemoryPage() {
       } else {
         newSet.add(genomeHash);
       }
+      // Save to localStorage for Dashboard to read
+      saveSelectedGenomesToStorage(newSet);
       return newSet;
     });
-  }, []);
+  }, [saveSelectedGenomesToStorage]);
 
   const selectAllGenomes = useCallback(() => {
     const allHashes = sortedGenomes.map(g => g.genome_hash).filter(Boolean);
-    setSelectedGenomeIds(new Set(allHashes));
-  }, [sortedGenomes]);
+    const newSet = new Set(allHashes);
+    setSelectedGenomeIds(newSet);
+    saveSelectedGenomesToStorage(newSet);
+  }, [sortedGenomes, saveSelectedGenomesToStorage]);
 
   const clearSelection = useCallback(() => {
     setSelectedGenomeIds(new Set());
-  }, []);
+    // Clear from localStorage too
+    try {
+      const key = getSelectedGenomesKey();
+      localStorage.removeItem(key);
+    } catch (e) {
+      console.warn("Failed to clear selected genomes:", e);
+    }
+  }, [getSelectedGenomesKey]);
 
   const isAllSelected = useMemo(() => {
     const validGenomes = sortedGenomes.filter(g => g.genome_hash);
@@ -514,6 +650,16 @@ export default function MemoryPage() {
           </div>
 
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            {/* Strategy Type filter */}
+            <select
+              value={strategyType}
+              onChange={(e) => setStrategyType(e.target.value)}
+              style={{ ...selectStyle, minWidth: 160 }}
+            >
+              <option value="rf_st_rsi">RF+ST+RSI (Long Only)</option>
+              <option value="rf_st_rsi_combined">RF+ST+RSI Combined</option>
+            </select>
+
             {/* Symbol filter */}
             <select
               value={symbol}
@@ -1026,7 +1172,16 @@ export default function MemoryPage() {
                           style={{ ...tdStyle, textAlign: "center" }}
                           onClick={() => setSelectedGenome(isDetailSelected ? null : g)}
                         >
-                          <span style={sourceStyle}>
+                          <span style={{
+                            ...sourceStyle,
+                            // Highlight compound sources (duplicates) with different color
+                            background: String(g.source || "").includes(".")
+                              ? "rgba(251,191,36,0.2)"
+                              : "rgba(59,130,246,0.15)",
+                            color: String(g.source || "").includes(".")
+                              ? "#fbbf24"
+                              : "#60a5fa",
+                          }}>
                             Run #{g.source || 1}
                           </span>
                         </td>

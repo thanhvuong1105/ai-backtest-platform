@@ -57,9 +57,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 3G
         reservations:
-          memory: 256M
+          memory: 512M
 
   # Celery Worker - Background task processor
   celery:
@@ -69,15 +69,15 @@ services:
       args:
         - BUILDKIT_INLINE_CACHE=1
     container_name: backtest-celery
-    # Balanced concurrency (6 workers)
-    command: celery -A app.services.celery_app.celery worker --loglevel=info -Q default --concurrency=${CELERY_CONCURRENCY:-6}
+    # Increased concurrency (8 workers) - listen to all queues
+    command: celery -A app.services.celery_app.celery worker --loglevel=info -Q default,backtest,optimization,ai_agent,quant_brain --concurrency=${CELERY_CONCURRENCY:-8}
     environment:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - JOB_TIMEOUT_SEC=3600
       - MAX_STDOUT_SIZE=20971520
-      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-6}
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-8}
       - PROJECT_ROOT=/app
       - PYTHONUNBUFFERED=1
       # Celery worker optimization - Prevent task redelivery
@@ -86,10 +86,10 @@ services:
       - CELERY_TASK_REJECT_ON_WORKER_LOST=false
       - CELERY_VISIBILITY_TIMEOUT=86400
       # ═══════════════════════════════════════════════════════
-      # BALANCED CPU PERFORMANCE
+      # INCREASED CPU PERFORMANCE
       # ═══════════════════════════════════════════════════════
-      - MAX_PARALLEL_RUNS=750
-      - MAX_THREAD_WORKERS=6
+      - MAX_PARALLEL_RUNS=1000
+      - MAX_THREAD_WORKERS=8
       - PARALLEL_FITNESS=true
       - NUMBA_NUM_THREADS=5
       - USE_FAST_STRATEGY=true

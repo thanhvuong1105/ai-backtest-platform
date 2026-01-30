@@ -30,6 +30,7 @@ COPY engine/ ./engine/
 # Expose port for FastAPI
 EXPOSE 8000
 
-# Default command - FastAPI server
+# Default command - FastAPI server with gunicorn for production
 # Override in docker-compose for Celery worker
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Timeout set to 600s for long-running chart-data requests (30m timeframe)
+CMD ["gunicorn", "app.main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "600", "--graceful-timeout", "300"]

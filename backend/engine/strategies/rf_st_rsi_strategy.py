@@ -517,27 +517,31 @@ class RFSTRSIStrategy:
             out_rf_long[i] = 1 if rf_long else 0
             out_rf_short[i] = 1 if rf_short else 0
 
-            # Flip signals
-            rf_src_prev = rf_src_history[-2] if len(rf_src_history) > 1 else rf_src_val
-            rf_flip_buy = rf_long and self._nz(rf_f_prev) < rf_src_prev
-            rf_flip_sell = rf_short and self._nz(rf_f_prev) > rf_src_prev
-
-            out_rf_flipBuy[i] = 1 if rf_flip_buy else 0
-            out_rf_flipSell[i] = 1 if rf_flip_sell else 0
-
             # Bands
             rf_hb = rf_f + rf_rng
             rf_lb = rf_f - rf_rng
             out_rf_hb[i] = rf_hb
             out_rf_lb[i] = rf_lb
 
-            # State
+            # State update BEFORE flip detection (matching Pine Script rf_CondIni)
+            # Pine: rf_CondIni := rf_longCond ? 1 : rf_shortCond ? -1 : rf_CondIni[1]
             rf_state_prev = rf_state
             if rf_long:
                 rf_state = 1
             elif rf_short:
                 rf_state = -1
+            # else: rf_state stays the same (matches rf_CondIni[1])
             out_rf_state[i] = rf_state
+
+            # Flip signals - EXACT match to Pine Script
+            # Pine: rf_flipBuy = rf_longCond and rf_CondIni[1] == -1
+            # Pine: rf_flipSell = rf_shortCond and rf_CondIni[1] == 1
+            # rf_state_prev is rf_CondIni[1], rf_long is rf_longCond
+            rf_flip_buy = rf_long and rf_state_prev == -1
+            rf_flip_sell = rf_short and rf_state_prev == 1
+
+            out_rf_flipBuy[i] = 1 if rf_flip_buy else 0
+            out_rf_flipSell[i] = 1 if rf_flip_sell else 0
 
             # ═══════════════════════════════════════════════════════
             # SUPERTREND SL

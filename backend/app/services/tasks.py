@@ -49,7 +49,8 @@ if not logger.handlers:
 # Configuration
 JOB_TIMEOUT_SEC = int(os.getenv("JOB_TIMEOUT_SEC", 3600))
 # Quant Brain needs longer timeout due to evolutionary optimization
-QUANT_BRAIN_TIMEOUT_SEC = int(os.getenv("QUANT_BRAIN_TIMEOUT_SEC", 7200))  # 2 hours default
+# Set to 1 day to ensure no interruption during long optimization runs
+QUANT_BRAIN_TIMEOUT_SEC = int(os.getenv("QUANT_BRAIN_TIMEOUT_SEC", 86400))  # 24 hours (1 day) default
 PROGRESS_BATCH_SIZE = int(os.getenv("PROGRESS_BATCH_SIZE", 20))
 
 

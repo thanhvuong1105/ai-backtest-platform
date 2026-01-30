@@ -96,8 +96,10 @@ def run_engine_script(
     })
 
     # Start subprocess
+    # Use -m to run as module for proper relative imports
+    module_name = f"engine.{script_name.replace('.py', '')}"
     process = subprocess.Popen(
-        [sys.executable, str(script_path)],
+        [sys.executable, "-m", module_name],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

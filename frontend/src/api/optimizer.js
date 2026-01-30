@@ -266,3 +266,25 @@ export async function clearMemory(strategyType = "rf_st_rsi", confirm = false) {
     (res) => res.json()
   );
 }
+
+/**
+ * Add multiple genomes to BXH Memory
+ * Used to manually add Top N genomes from Quant Brain results
+ * @param {string} symbol - Trading symbol
+ * @param {string} timeframe - Timeframe
+ * @param {Array} genomes - List of genome objects with {genome, results/summary, equityCurve, source}
+ * @param {string} strategyType - Strategy type (default: "rf_st_rsi")
+ */
+export async function addGenomesToMemory(
+  symbol,
+  timeframe,
+  genomes,
+  strategyType = "rf_st_rsi"
+) {
+  return postJson("/memory/genomes/add-batch", {
+    symbol,
+    timeframe,
+    genomes,
+    strategy_type: strategyType,
+  });
+}

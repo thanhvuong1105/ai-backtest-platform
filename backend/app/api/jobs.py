@@ -141,6 +141,17 @@ def validate_optimize_config(cfg: Dict[str, Any]) -> Optional[str]:
         if not isinstance(params.get("rf_mult"), list):
             return "strategy.params.rf_mult must be array"
 
+    elif strat["type"] == "rf_st_rsi_combined":
+        # Combined strategy - validate entry params are arrays
+        if not isinstance(params.get("st_atrPeriod"), list):
+            return "strategy.params.st_atrPeriod must be array"
+        if not isinstance(params.get("st_mult"), list):
+            return "strategy.params.st_mult must be array"
+        if not isinstance(params.get("rf_period"), list):
+            return "strategy.params.rf_period must be array"
+        if not isinstance(params.get("rf_mult"), list):
+            return "strategy.params.rf_mult must be array"
+
     else:
         return f"Unknown strategy type: {strat['type']}"
 

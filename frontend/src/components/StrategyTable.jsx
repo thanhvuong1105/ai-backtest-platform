@@ -33,7 +33,16 @@ const paramLabels = {
   debug: "Debug",
 };
 
-export default function StrategyTable({ rows = [], bestKey, onSelectRow, pageSize = 20, currentPage = 1 }) {
+export default function StrategyTable({
+  rows = [],
+  bestKey,
+  onSelectRow,
+  pageSize = 20,
+  currentPage = 1,
+  // New props for Memory selection
+  selectedForMemory = {},  // { strategyId: true/false }
+  onToggleMemorySelect,    // (strategyId) => void
+}) {
   const [hoveredIdx, setHoveredIdx] = useState(null);
 
   if (!rows.length) return <p style={{ opacity: 0.7 }}>No strategies</p>;
@@ -120,10 +129,19 @@ export default function StrategyTable({ rows = [], bestKey, onSelectRow, pageSiz
   const start = (currentPage - 1) * pageSize;
   const paged = rows.slice(start, start + pageSize);
 
+  // Checkbox style
+  const checkboxStyle = {
+    width: 16,
+    height: 16,
+    cursor: "pointer",
+    accentColor: "#a855f7",
+  };
+
   return (
     <table width="100%" style={{ borderCollapse: "collapse" }}>
       <thead>
         <tr>
+          {onToggleMemorySelect && <th style={{ ...headerStyle, width: 40, textAlign: "center" }}>Sel</th>}
           <th style={headerStyle}>Symbol</th>
           <th style={headerStyle}>TF</th>
           <th style={headerStyle}>Total PnL</th>
@@ -146,13 +164,26 @@ export default function StrategyTable({ rows = [], bestKey, onSelectRow, pageSiz
               onMouseEnter={() => setHoveredIdx(globalIdx)}
               onMouseLeave={() => setHoveredIdx(null)}
               style={{
-                background: i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent",
-                borderLeft: best ? "3px solid #22c55e" : "3px solid transparent",
+                background: selectedForMemory[r.strategyId]
+                  ? "rgba(168,85,247,0.1)"
+                  : i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent",
+                borderLeft: best ? "3px solid #22c55e" : selectedForMemory[r.strategyId] ? "3px solid #a855f7" : "3px solid transparent",
                 boxShadow: best ? "0 6px 18px rgba(34,197,94,0.15)" : "none",
                 cursor: onSelectRow ? "pointer" : "default",
                 position: "relative",
               }}
             >
+              {onToggleMemorySelect && (
+                <td style={{ ...rowBase, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={!!selectedForMemory[r.strategyId]}
+                    onChange={() => onToggleMemorySelect(r.strategyId)}
+                    style={checkboxStyle}
+                    title="Select for Add to Memory"
+                  />
+                </td>
+              )}
               <td style={{ ...rowBase, position: "relative" }}>
                 {best ? "★ " : ""}
                 {rankLabel}

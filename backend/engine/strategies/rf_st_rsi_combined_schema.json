@@ -1,0 +1,496 @@
+{
+  "strategyName": "RF + ST + RSI Div Combined Strategy (Long & Short)",
+  "strategyType": "rf_st_rsi_combined",
+  "description": "Range Filter + SuperTrend + RSI Divergence combined strategy with Long & Short positions. Dual Flip entry when RF and ST flip within 8 bars (Long) or 12 bars (Short), plus RSI divergence entries.",
+  "author": "InschoShayne17122002",
+  "version": "2.0",
+  "inputs": {
+    "enable": {
+      "label": "Enable Settings",
+      "params": [
+        {
+          "key": "enableLong",
+          "label": "Enable Long Trading",
+          "type": "bool",
+          "default": true,
+          "description": "Allow Long positions"
+        },
+        {
+          "key": "enableShort",
+          "label": "Enable Short Trading",
+          "type": "bool",
+          "default": true,
+          "description": "Allow Short positions"
+        }
+      ]
+    },
+    "entry": {
+      "label": "Entry Settings",
+      "params": [
+        {
+          "key": "showEntryLong",
+          "label": "Enable Dual Flip Long Entry",
+          "type": "bool",
+          "default": true,
+          "description": "Hiện Entry Dual Flip (Long)?"
+        },
+        {
+          "key": "showEntryShort",
+          "label": "Enable Dual Flip Short Entry",
+          "type": "bool",
+          "default": true,
+          "description": "Hiện Entry Dual Flip (Short)?"
+        },
+        {
+          "key": "showEntryRSI_L",
+          "label": "Enable RSI Long Entry",
+          "type": "bool",
+          "default": true,
+          "description": "Hiện Entry RSI Long?"
+        },
+        {
+          "key": "showEntryRSI_S",
+          "label": "Enable RSI Short Entry",
+          "type": "bool",
+          "default": true,
+          "description": "Hiện Entry RSI Short?"
+        },
+        {
+          "key": "dualFlipBarsLong",
+          "label": "Dual Flip Bars (Long)",
+          "type": "int",
+          "default": 8,
+          "min": 1,
+          "max": 50,
+          "step": 1,
+          "description": "Max bars between RF and ST flip for Long entry"
+        },
+        {
+          "key": "dualFlipBarsShort",
+          "label": "Dual Flip Bars (Short)",
+          "type": "int",
+          "default": 12,
+          "min": 1,
+          "max": 50,
+          "step": 1,
+          "description": "Max bars between RF and ST flip for Short entry"
+        },
+        {
+          "key": "st_atrPeriod",
+          "label": "ST ATR Period",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "key": "st_src",
+          "label": "ST Source",
+          "type": "select",
+          "default": "hl2",
+          "options": ["close", "hl2", "hlc3", "ohlc4"]
+        },
+        {
+          "key": "st_mult",
+          "label": "ST ATR Multiplier",
+          "type": "float",
+          "default": 2.0,
+          "min": 0.1,
+          "max": 10.0,
+          "step": 0.1
+        },
+        {
+          "key": "st_changeATR",
+          "label": "ST use ATR()?",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "key": "rf_src_in",
+          "label": "RF Source",
+          "type": "select",
+          "default": "close",
+          "options": ["close", "hl2", "hlc3", "ohlc4"]
+        },
+        {
+          "key": "rf_period",
+          "label": "RF Period",
+          "type": "int",
+          "default": 100,
+          "min": 1,
+          "max": 500,
+          "step": 1
+        },
+        {
+          "key": "rf_mult",
+          "label": "RF Multiplier",
+          "type": "float",
+          "default": 3.0,
+          "min": 0.1,
+          "max": 20.0,
+          "step": 0.1
+        },
+        {
+          "key": "lenRSI",
+          "label": "RSI Length",
+          "type": "int",
+          "default": 14,
+          "min": 1,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "key": "lenMA",
+          "label": "MA Length on RSI",
+          "type": "int",
+          "default": 6,
+          "min": 1,
+          "max": 50,
+          "step": 1
+        }
+      ]
+    },
+    "sl_long": {
+      "label": "Stop Loss - Long",
+      "params": [
+        {
+          "key": "st_sl_atrPeriod_L",
+          "label": "ST SL ATR Period (Long)",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "key": "st_sl_src_L",
+          "label": "ST SL Source (Long)",
+          "type": "select",
+          "default": "hl2",
+          "options": ["close", "hl2", "hlc3", "ohlc4"]
+        },
+        {
+          "key": "st_sl_mult_L",
+          "label": "ST SL Multiplier (Long)",
+          "type": "float",
+          "default": 3.0,
+          "min": 0.1,
+          "max": 20.0,
+          "step": 0.1
+        },
+        {
+          "key": "st_sl_useATR_L",
+          "label": "ST SL use ATR? (Long)",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "key": "rf_sl_period_L",
+          "label": "RF SL Period (Long)",
+          "type": "int",
+          "default": 20,
+          "min": 1,
+          "max": 500,
+          "step": 1
+        },
+        {
+          "key": "rf_sl_mult_L",
+          "label": "RF SL Multiplier (Long)",
+          "type": "float",
+          "default": 15.0,
+          "min": 0.1,
+          "max": 50.0,
+          "step": 0.1
+        }
+      ]
+    },
+    "sl_short": {
+      "label": "Stop Loss - Short",
+      "params": [
+        {
+          "key": "st_sl_atrPeriod_S",
+          "label": "ST SL ATR Period (Short)",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "key": "st_sl_src_S",
+          "label": "ST SL Source (Short)",
+          "type": "select",
+          "default": "hl2",
+          "options": ["close", "hl2", "hlc3", "ohlc4"]
+        },
+        {
+          "key": "st_sl_mult_S",
+          "label": "ST SL Multiplier (Short)",
+          "type": "float",
+          "default": 2.0,
+          "min": 0.1,
+          "max": 20.0,
+          "step": 0.1
+        },
+        {
+          "key": "st_sl_useATR_S",
+          "label": "ST SL use ATR? (Short)",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "key": "rf_sl_period_S",
+          "label": "RF SL Period (Short)",
+          "type": "int",
+          "default": 20,
+          "min": 1,
+          "max": 500,
+          "step": 1
+        },
+        {
+          "key": "rf_sl_mult_S",
+          "label": "RF SL Multiplier (Short)",
+          "type": "float",
+          "default": 3.0,
+          "min": 0.1,
+          "max": 50.0,
+          "step": 0.1
+        }
+      ]
+    },
+    "tp_dual_long": {
+      "label": "Take Profit - Dual Flip Long",
+      "params": [
+        {
+          "key": "st_tp_dual_period_L",
+          "label": "ST TP ATR Period DualFlip (Long)",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "key": "st_tp_dual_mult_L",
+          "label": "ST TP Multiplier DualFlip (Long)",
+          "type": "float",
+          "default": 2.0,
+          "min": 0.1,
+          "max": 10.0,
+          "step": 0.1
+        },
+        {
+          "key": "rr_mult_dual_L",
+          "label": "TP R:R Multiplier DualFlip (Long)",
+          "type": "float",
+          "default": 4.0,
+          "min": 0.1,
+          "max": 20.0,
+          "step": 0.1,
+          "description": "Risk-Reward ratio for Take Profit"
+        }
+      ]
+    },
+    "tp_dual_short": {
+      "label": "Take Profit - Dual Flip Short",
+      "params": [
+        {
+          "key": "st_tp_dual_period_S",
+          "label": "ST TP ATR Period DualFlip (Short)",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "key": "st_tp_dual_mult_S",
+          "label": "ST TP Multiplier DualFlip (Short)",
+          "type": "float",
+          "default": 2.0,
+          "min": 0.1,
+          "max": 10.0,
+          "step": 0.1
+        },
+        {
+          "key": "rr_mult_dual_S",
+          "label": "TP R:R Multiplier DualFlip (Short)",
+          "type": "float",
+          "default": 0.75,
+          "min": 0.1,
+          "max": 20.0,
+          "step": 0.1,
+          "description": "Risk-Reward ratio for Take Profit"
+        }
+      ]
+    },
+    "tp_rsi1_long": {
+      "label": "Take Profit - RSI Long",
+      "params": [
+        {
+          "key": "st_tp_rsi1_period_L",
+          "label": "ST TP ATR Period RSI (Long)",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "key": "st_tp_rsi1_mult_L",
+          "label": "ST TP Multiplier RSI (Long)",
+          "type": "float",
+          "default": 2.0,
+          "min": 0.1,
+          "max": 10.0,
+          "step": 0.1
+        },
+        {
+          "key": "rr_mult_rsi1_L",
+          "label": "TP R:R Multiplier RSI (Long)",
+          "type": "float",
+          "default": 4.0,
+          "min": 0.1,
+          "max": 20.0,
+          "step": 0.1,
+          "description": "Risk-Reward ratio for RSI Take Profit"
+        }
+      ]
+    },
+    "tp_rsi1_short": {
+      "label": "Take Profit - RSI Short",
+      "params": [
+        {
+          "key": "st_tp_rsi1_period_S",
+          "label": "ST TP ATR Period RSI (Short)",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "key": "st_tp_rsi1_mult_S",
+          "label": "ST TP Multiplier RSI (Short)",
+          "type": "float",
+          "default": 2.0,
+          "min": 0.1,
+          "max": 10.0,
+          "step": 0.1
+        },
+        {
+          "key": "rr_mult_rsi1_S",
+          "label": "TP R:R Multiplier RSI (Short)",
+          "type": "float",
+          "default": 0.75,
+          "min": 0.1,
+          "max": 20.0,
+          "step": 0.1,
+          "description": "Risk-Reward ratio for RSI Take Profit"
+        }
+      ]
+    },
+    "debug": {
+      "label": "Debug Settings",
+      "params": [
+        {
+          "key": "debug",
+          "label": "Enable Debug Logging",
+          "type": "bool",
+          "default": false,
+          "description": "Print detailed trade logs for comparison with TradingView"
+        }
+      ]
+    }
+  },
+  "defaultParams": {
+    "enableLong": true,
+    "enableShort": true,
+    "showEntryLong": true,
+    "showEntryShort": true,
+    "showEntryRSI_L": true,
+    "showEntryRSI_S": true,
+    "dualFlipBarsLong": 8,
+    "dualFlipBarsShort": 12,
+    "st_atrPeriod": 10,
+    "st_src": "hl2",
+    "st_mult": 2.0,
+    "st_changeATR": true,
+    "rf_src_in": "close",
+    "rf_period": 100,
+    "rf_mult": 3.0,
+    "lenRSI": 14,
+    "lenMA": 6,
+    "st_sl_atrPeriod_L": 10,
+    "st_sl_src_L": "hl2",
+    "st_sl_mult_L": 3.0,
+    "st_sl_useATR_L": true,
+    "rf_sl_period_L": 20,
+    "rf_sl_mult_L": 15.0,
+    "st_sl_atrPeriod_S": 10,
+    "st_sl_src_S": "hl2",
+    "st_sl_mult_S": 2.0,
+    "st_sl_useATR_S": true,
+    "rf_sl_period_S": 20,
+    "rf_sl_mult_S": 3.0,
+    "st_tp_dual_period_L": 10,
+    "st_tp_dual_mult_L": 2.0,
+    "rr_mult_dual_L": 4.0,
+    "st_tp_dual_period_S": 10,
+    "st_tp_dual_mult_S": 2.0,
+    "rr_mult_dual_S": 0.75,
+    "st_tp_rsi1_period_L": 10,
+    "st_tp_rsi1_mult_L": 2.0,
+    "rr_mult_rsi1_L": 4.0,
+    "st_tp_rsi1_period_S": 10,
+    "st_tp_rsi1_mult_S": 2.0,
+    "rr_mult_rsi1_S": 0.75,
+    "debug": false
+  },
+  "mapping": {
+    "pineScript": {
+      "enableLong": "enableLong",
+      "enableShort": "enableShort",
+      "showEntryLong": "showEntryLong",
+      "showEntryShort": "showEntryShort",
+      "showEntryRSI_L": "showEntryRSI_L",
+      "showEntryRSI_S": "showEntryRSI_S",
+      "dualFlipBarsLong": "dualFlipBarsLong",
+      "dualFlipBarsShort": "dualFlipBarsShort",
+      "st_atrPeriod": "st_atrPeriod",
+      "st_src": "st_src",
+      "st_mult": "st_mult",
+      "st_changeATR": "st_changeATR",
+      "rf_src_in": "rf_src_in",
+      "rf_period": "rf_period",
+      "rf_mult": "rf_mult",
+      "lenRSI": "lenRSI",
+      "lenMA": "lenMA",
+      "st_sl_atrPeriod_L": "st_sl_atrPeriod_L",
+      "st_sl_src_L": "st_sl_src_L",
+      "st_sl_mult_L": "st_sl_mult_L",
+      "st_sl_useATR_L": "st_sl_useATR_L",
+      "rf_sl_period_L": "rf_sl_period_L",
+      "rf_sl_mult_L": "rf_sl_mult_L",
+      "st_sl_atrPeriod_S": "st_sl_atrPeriod_S",
+      "st_sl_src_S": "st_sl_src_S",
+      "st_sl_mult_S": "st_sl_mult_S",
+      "st_sl_useATR_S": "st_sl_useATR_S",
+      "rf_sl_period_S": "rf_sl_period_S",
+      "rf_sl_mult_S": "rf_sl_mult_S",
+      "st_tp_dual_period_L": "st_tp_dual_period_L",
+      "st_tp_dual_mult_L": "st_tp_dual_mult_L",
+      "rr_mult_dual_L": "rr_mult_dual_L",
+      "st_tp_dual_period_S": "st_tp_dual_period_S",
+      "st_tp_dual_mult_S": "st_tp_dual_mult_S",
+      "rr_mult_dual_S": "rr_mult_dual_S",
+      "st_tp_rsi1_period_L": "st_tp_rsi1_period_L",
+      "st_tp_rsi1_mult_L": "st_tp_rsi1_mult_L",
+      "rr_mult_rsi1_L": "rr_mult_rsi1_L",
+      "st_tp_rsi1_period_S": "st_tp_rsi1_period_S",
+      "st_tp_rsi1_mult_S": "st_tp_rsi1_mult_S",
+      "rr_mult_rsi1_S": "rr_mult_rsi1_S"
+    }
+  }
+}

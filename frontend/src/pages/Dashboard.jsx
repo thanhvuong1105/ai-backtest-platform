@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
-import { startAiAgent, startQuantBrain, getAiAgentResult, cancelAiAgent, createProgressStream } from "../api/optimizer";
+import { startAiAgent, startQuantBrain, getAiAgentResult, cancelAiAgent, createProgressStream, addGenomesToMemory } from "../api/optimizer";
 
 import Header from "../components/Header";
 import StrategyTable from "../components/StrategyTable";
@@ -63,12 +63,85 @@ export default function Dashboard() {
         },
       },
     },
+    {
+      id: "rf_st_rsi_combined",
+      name: "RF + ST + RSI Combined",
+      subtitle: "Long & Short with separate SL/TP params",
+      type: "rf_st_rsi_combined",
+      supported: true,
+      defaults: {
+        symbol: "BTCUSDT",
+        timeframes: ["30m"],
+        // Entry Settings (shared for Long & Short)
+        st_atrPeriod: { start: 1, end: 50, step: 2 },
+        st_mult: { start: 0.5, end: 10, step: 0.5 },
+        rf_period: { start: 1, end: 200, step: 20 },
+        rf_mult: { start: 1, end: 10, step: 1 },
+        rsi_length: { start: 5, end: 20, step: 2 },
+        rsi_ma_length: { start: 2, end: 20, step: 2 },
+        dualFlipBarsLong: { start: 1, end: 30, step: 2 },
+        dualFlipBarsShort: { start: 1, end: 30, step: 2 },
+        // Stop Loss Long
+        sl_long_st_atrPeriod: { start: 1, end: 50, step: 0 },
+        sl_long_st_mult: { start: 1, end: 20, step: 0 },
+        sl_long_rf_period: { start: 1, end: 200, step: 0 },
+        sl_long_rf_mult: { start: 1, end: 20, step: 0 },
+        // Stop Loss Short
+        sl_short_st_atrPeriod: { start: 1, end: 50, step: 0 },
+        sl_short_st_mult: { start: 1, end: 20, step: 0 },
+        sl_short_rf_period: { start: 1, end: 200, step: 0 },
+        sl_short_rf_mult: { start: 1, end: 20, step: 0 },
+        // Take Profit Dual Flip Long
+        tp_dual_long_st_atrPeriod: { start: 1, end: 50, step: 0 },
+        tp_dual_long_st_mult: { start: 1, end: 20, step: 0 },
+        tp_dual_long_rr_mult: { start: 0.1, end: 5, step: 0.5 },
+        // Take Profit Dual Flip Short
+        tp_dual_short_st_atrPeriod: { start: 1, end: 50, step: 0 },
+        tp_dual_short_st_mult: { start: 1, end: 20, step: 0 },
+        tp_dual_short_rr_mult: { start: 0.1, end: 5, step: 0.3 },
+        // Take Profit RSI Long
+        tp_rsi_long_st_atrPeriod: { start: 1, end: 50, step: 0 },
+        tp_rsi_long_st_mult: { start: 1, end: 20, step: 0 },
+        tp_rsi_long_rr_mult: { start: 0.1, end: 5, step: 0.5 },
+        // Take Profit RSI Short
+        tp_rsi_short_st_atrPeriod: { start: 1, end: 50, step: 0 },
+        tp_rsi_short_st_mult: { start: 1, end: 20, step: 0 },
+        tp_rsi_short_rr_mult: { start: 0.1, end: 5, step: 0.3 },
+        // Filters
+        minTrades: 1,
+        minPF: 0.5,
+        maxDD: 50,
+        properties: {
+          initialCapital: 1000000,
+          baseCurrency: "USDT",
+          orderSize: { value: 100, type: "percent" },
+          pyramiding: 1,
+          commission: { value: 0, type: "percent" },
+          slippage: 0,
+        },
+      },
+    },
   ];
 
-  const [loading, setLoading] = useState(false);
+  // Load persisted state from sessionStorage
+  const [loading, setLoading] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem("quant_brain_loading");
+      return saved === "true";
+    } catch { return false; }
+  });
   const [error, setError] = useState(null);
-  const [result, setResult] = useState(null);
-  const [agentComment, setAgentComment] = useState("");
+  const [result, setResult] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem("quant_brain_result");
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
+  const [agentComment, setAgentComment] = useState(() => {
+    try {
+      return sessionStorage.getItem("quant_brain_comment") || "";
+    } catch { return ""; }
+  });
 
   const tfOptions = ["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1D"];
   const [selectedStrategyId, setSelectedStrategyId] = useState(strategyConfigs[0].id);
@@ -95,10 +168,27 @@ export default function Dashboard() {
   const [pageSize] = useState(20);
   const [currentPageOverlay, setCurrentPageOverlay] = useState(1);
   const [currentPageBots, setCurrentPageBots] = useState(1);
-  const [jobId, setJobId] = useState(null);
-  const [progress, setProgress] = useState({ percent: 0, completed: 0, total: 0, status: "idle" });
+  const [jobId, setJobId] = useState(() => {
+    try {
+      return sessionStorage.getItem("quant_brain_job_id") || null;
+    } catch { return null; }
+  });
+  const [progress, setProgress] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem("quant_brain_progress");
+      return saved ? JSON.parse(saved) : { percent: 0, completed: 0, total: 0, status: "idle" };
+    } catch { return { percent: 0, completed: 0, total: 0, status: "idle" }; }
+  });
   const [canceling, setCanceling] = useState(false);
   const [useQuantBrain, setUseQuantBrain] = useState(true); // Always use Quant Brain (AI Agent deprecated)
+
+  // Add to Memory state
+  const [addingToMemory, setAddingToMemory] = useState(false);
+  const [addToMemorySuccess, setAddToMemorySuccess] = useState(null); // null | {count: N} | {error: string}
+  const [selectedForMemory, setSelectedForMemory] = useState({}); // { strategyId: true/false }
+
+  // Track selected genomes from Memory page
+  const [selectedGenomesCount, setSelectedGenomesCount] = useState(0);
 
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [selectedTradeIndex, setSelectedTradeIndex] = useState(null);
@@ -125,6 +215,15 @@ export default function Dashboard() {
     "Take Profit - Dual Flip": false,
     "Take Profit - RSI": false,
     "Debug": false,
+    // RF + ST + RSI Combined groups
+    "Enable": true,
+    "Entry": true,
+    "SL - Long": false,
+    "SL - Short": false,
+    "TP DualFlip - Long": false,
+    "TP DualFlip - Short": false,
+    "TP RSI1 - Long": false,
+    "TP RSI1 - Short": false,
   });
 
   const toggleParamGroup = (label) => {
@@ -133,6 +232,61 @@ export default function Dashboard() {
 
   const currentStrategy = strategyConfigs.find((s) => s.id === selectedStrategyId);
   const currentInputs = strategyInputs[selectedStrategyId] || {};
+
+  // Load selected genomes count from localStorage (synced with Memory page)
+  // Include strategy type in key to separate selections between Combined and Long Only
+  useEffect(() => {
+    const loadSelectedCount = () => {
+      try {
+        const timeframes = currentInputs.timeframes || ["30m"];
+        const symbol = currentInputs.symbol || "BTCUSDT";
+        const tf = timeframes[0] || "30m";
+        const strategyType = currentStrategy?.type || "rf_st_rsi";
+        const key = `quant_brain_selected_genomes_${strategyType}_${symbol}_${tf}`;
+        const saved = localStorage.getItem(key);
+        if (saved) {
+          const genomes = JSON.parse(saved);
+          setSelectedGenomesCount(genomes.length);
+        } else {
+          setSelectedGenomesCount(0);
+        }
+      } catch (e) {
+        setSelectedGenomesCount(0);
+      }
+    };
+
+    // Load on mount and when inputs change
+    loadSelectedCount();
+
+    // Listen for localStorage changes (from Memory page)
+    const handleStorageChange = (e) => {
+      if (e.key && e.key.startsWith("quant_brain_selected_genomes_")) {
+        loadSelectedCount();
+      }
+    };
+    window.addEventListener("storage", handleStorageChange);
+
+    // Also poll periodically (for same-tab changes)
+    const interval = setInterval(loadSelectedCount, 1000);
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      clearInterval(interval);
+    };
+  }, [currentInputs.timeframes, currentInputs.symbol, currentStrategy?.type]);
+
+  // Restore visibleSeries and selectedBotId from persisted result on mount
+  useEffect(() => {
+    if (result?.runs?.length && Object.keys(visibleSeries).length === 0) {
+      const vis = {};
+      result.runs.slice(0, 5).forEach((r) => {
+        vis[r.strategyId] = true;
+      });
+      setVisibleSeries(vis);
+      setSelectedBotId(result.runs[0].strategyId);
+      setTradesBotId(result.runs[0].strategyId);
+    }
+  }, [result]);
 
   const updateInput = (key, value) => {
     setStrategyInputs((prev) => ({
@@ -205,7 +359,8 @@ export default function Dashboard() {
   };
 
   const handleRun = async () => {
-    if (!currentStrategy?.supported || currentStrategy?.type !== "rf_st_rsi") {
+    const supportedTypes = ["rf_st_rsi", "rf_st_rsi_combined"];
+    if (!currentStrategy?.supported || !supportedTypes.includes(currentStrategy?.type)) {
       setError("Strategy này chưa được backend hỗ trợ trên UI hiện tại.");
       return;
     }
@@ -268,6 +423,62 @@ export default function Dashboard() {
         // Debug
         debug: currentInputs.debug ?? false,
       };
+    } else if (currentStrategy.type === "rf_st_rsi_combined") {
+      // Helper to convert range input {start, end, step} to array
+      const rangeToArray = (input, defaults) => {
+        if (Array.isArray(input)) return input;
+        if (input && typeof input === "object" && "start" in input) {
+          return buildArray(
+            Number(input.start ?? defaults[0]),
+            Number(input.end ?? defaults[1]),
+            Number(input.step ?? defaults[2])
+          );
+        }
+        return defaults;
+      };
+
+      params = {
+        // Entry Settings (shared)
+        showDualFlip: currentInputs.showDualFlip ?? true,
+        showRSI: currentInputs.showRSI ?? true,
+        enableLong: currentInputs.enableLong ?? true,
+        enableShort: currentInputs.enableShort ?? true,
+        st_useATR: currentInputs.st_useATR ?? true,
+        st_atrPeriod: rangeToArray(currentInputs.st_atrPeriod, [1, 20, 2]),
+        st_mult: rangeToArray(currentInputs.st_mult, [1, 5, 0.5]),
+        rf_period: rangeToArray(currentInputs.rf_period, [30, 150, 20]),
+        rf_mult: rangeToArray(currentInputs.rf_mult, [1, 10, 1]),
+        rsi_length: rangeToArray(currentInputs.rsi_length, [5, 20, 2]),
+        rsi_ma_length: rangeToArray(currentInputs.rsi_ma_length, [2, 10, 2]),
+        // Stop Loss Long
+        sl_long_st_atrPeriod: rangeToArray(currentInputs.sl_long_st_atrPeriod, [1, 20, 2]),
+        sl_long_st_mult: rangeToArray(currentInputs.sl_long_st_mult, [2, 10, 1]),
+        sl_long_rf_period: rangeToArray(currentInputs.sl_long_rf_period, [10, 200, 20]),
+        sl_long_rf_mult: rangeToArray(currentInputs.sl_long_rf_mult, [3, 20, 2]),
+        // Stop Loss Short
+        sl_short_st_atrPeriod: rangeToArray(currentInputs.sl_short_st_atrPeriod, [1, 20, 2]),
+        sl_short_st_mult: rangeToArray(currentInputs.sl_short_st_mult, [1, 10, 1]),
+        sl_short_rf_period: rangeToArray(currentInputs.sl_short_rf_period, [10, 200, 20]),
+        sl_short_rf_mult: rangeToArray(currentInputs.sl_short_rf_mult, [1, 15, 2]),
+        // Take Profit Dual Flip Long
+        tp_dual_long_st_atrPeriod: rangeToArray(currentInputs.tp_dual_long_st_atrPeriod, [1, 20, 2]),
+        tp_dual_long_st_mult: rangeToArray(currentInputs.tp_dual_long_st_mult, [0.5, 5, 0.5]),
+        tp_dual_long_rr_mult: rangeToArray(currentInputs.tp_dual_long_rr_mult, [0.5, 10, 0.5]),
+        // Take Profit Dual Flip Short
+        tp_dual_short_st_atrPeriod: rangeToArray(currentInputs.tp_dual_short_st_atrPeriod, [1, 20, 2]),
+        tp_dual_short_st_mult: rangeToArray(currentInputs.tp_dual_short_st_mult, [0.5, 5, 0.5]),
+        tp_dual_short_rr_mult: rangeToArray(currentInputs.tp_dual_short_rr_mult, [0.1, 5, 0.3]),
+        // Take Profit RSI Long
+        tp_rsi_long_st_atrPeriod: rangeToArray(currentInputs.tp_rsi_long_st_atrPeriod, [1, 20, 2]),
+        tp_rsi_long_st_mult: rangeToArray(currentInputs.tp_rsi_long_st_mult, [0.5, 5, 0.5]),
+        tp_rsi_long_rr_mult: rangeToArray(currentInputs.tp_rsi_long_rr_mult, [0.5, 10, 0.5]),
+        // Take Profit RSI Short
+        tp_rsi_short_st_atrPeriod: rangeToArray(currentInputs.tp_rsi_short_st_atrPeriod, [1, 20, 2]),
+        tp_rsi_short_st_mult: rangeToArray(currentInputs.tp_rsi_short_st_mult, [0.5, 5, 0.5]),
+        tp_rsi_short_rr_mult: rangeToArray(currentInputs.tp_rsi_short_rr_mult, [0.1, 5, 0.3]),
+        // Debug
+        debug: currentInputs.debug ?? false,
+      };
     }
 
     // Build paramBounds for Quant Brain (raw range objects)
@@ -291,6 +502,59 @@ export default function Dashboard() {
         tp_rsi_st_mult: currentInputs.tp_rsi_st_mult,
         tp_rsi_rr_mult: currentInputs.tp_rsi_rr_mult,
       };
+    } else if (currentStrategy.type === "rf_st_rsi_combined") {
+      paramBounds = {
+        // Entry
+        st_atrPeriod: currentInputs.st_atrPeriod,
+        st_mult: currentInputs.st_mult,
+        rf_period: currentInputs.rf_period,
+        rf_mult: currentInputs.rf_mult,
+        rsi_length: currentInputs.rsi_length,
+        rsi_ma_length: currentInputs.rsi_ma_length,
+        // SL Long
+        sl_long_st_atrPeriod: currentInputs.sl_long_st_atrPeriod,
+        sl_long_st_mult: currentInputs.sl_long_st_mult,
+        sl_long_rf_period: currentInputs.sl_long_rf_period,
+        sl_long_rf_mult: currentInputs.sl_long_rf_mult,
+        // SL Short
+        sl_short_st_atrPeriod: currentInputs.sl_short_st_atrPeriod,
+        sl_short_st_mult: currentInputs.sl_short_st_mult,
+        sl_short_rf_period: currentInputs.sl_short_rf_period,
+        sl_short_rf_mult: currentInputs.sl_short_rf_mult,
+        // TP Dual Long
+        tp_dual_long_st_atrPeriod: currentInputs.tp_dual_long_st_atrPeriod,
+        tp_dual_long_st_mult: currentInputs.tp_dual_long_st_mult,
+        tp_dual_long_rr_mult: currentInputs.tp_dual_long_rr_mult,
+        // TP Dual Short
+        tp_dual_short_st_atrPeriod: currentInputs.tp_dual_short_st_atrPeriod,
+        tp_dual_short_st_mult: currentInputs.tp_dual_short_st_mult,
+        tp_dual_short_rr_mult: currentInputs.tp_dual_short_rr_mult,
+        // TP RSI Long
+        tp_rsi_long_st_atrPeriod: currentInputs.tp_rsi_long_st_atrPeriod,
+        tp_rsi_long_st_mult: currentInputs.tp_rsi_long_st_mult,
+        tp_rsi_long_rr_mult: currentInputs.tp_rsi_long_rr_mult,
+        // TP RSI Short
+        tp_rsi_short_st_atrPeriod: currentInputs.tp_rsi_short_st_atrPeriod,
+        tp_rsi_short_st_mult: currentInputs.tp_rsi_short_st_mult,
+        tp_rsi_short_rr_mult: currentInputs.tp_rsi_short_rr_mult,
+      };
+    }
+
+    // Load selected genomes from localStorage (set by MemoryPage)
+    // Include strategy type in key to get selection for current strategy only
+    let selectedGenomes = [];
+    if (useQuantBrain) {
+      try {
+        const strategyType = currentStrategy.type;
+        const selectedKey = `quant_brain_selected_genomes_${strategyType}_${currentInputs.symbol}_${tfNormalized[0]}`;
+        const savedSelected = localStorage.getItem(selectedKey);
+        if (savedSelected) {
+          selectedGenomes = JSON.parse(savedSelected);
+          console.log(`Loaded ${selectedGenomes.length} selected genomes from MemoryPage for ${strategyType}`);
+        }
+      } catch (e) {
+        console.warn("Failed to load selected genomes:", e);
+      }
     }
 
     const cfg = {
@@ -301,6 +565,8 @@ export default function Dashboard() {
         params,
       },
       paramBounds,  // Send raw bounds for Quant Brain
+      // Include selected genomes for merge (from MemoryPage selection)
+      selectedGenomes: selectedGenomes.length > 0 ? selectedGenomes : undefined,
       filters: {
         minPF: Number(currentInputs.minPF),
       minTrades: Number(currentInputs.minTrades),
@@ -441,7 +707,129 @@ export default function Dashboard() {
     }
   }, [jobId, progress]);
 
-  // Cleanup EventSource on unmount
+  // Persist state to sessionStorage
+  useEffect(() => {
+    try {
+      if (result) {
+        sessionStorage.setItem("quant_brain_result", JSON.stringify(result));
+      }
+    } catch (e) {
+      console.warn("Failed to save result to sessionStorage:", e);
+    }
+  }, [result]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("quant_brain_comment", agentComment);
+    } catch (e) {
+      console.warn("Failed to save comment to sessionStorage:", e);
+    }
+  }, [agentComment]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("quant_brain_loading", loading ? "true" : "false");
+    } catch (e) {
+      console.warn("Failed to save loading to sessionStorage:", e);
+    }
+  }, [loading]);
+
+  useEffect(() => {
+    try {
+      if (jobId) {
+        sessionStorage.setItem("quant_brain_job_id", jobId);
+      } else {
+        sessionStorage.removeItem("quant_brain_job_id");
+      }
+    } catch (e) {
+      console.warn("Failed to save jobId to sessionStorage:", e);
+    }
+  }, [jobId]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("quant_brain_progress", JSON.stringify(progress));
+    } catch (e) {
+      console.warn("Failed to save progress to sessionStorage:", e);
+    }
+  }, [progress]);
+
+  // Reconnect to SSE when returning to tab with active job
+  useEffect(() => {
+    // Only reconnect if we have a jobId and we're loading but no active EventSource
+    if (jobId && loading && !eventSourceRef.current) {
+      console.log("[Dashboard] Reconnecting to job:", jobId);
+
+      const startTimeRef = Date.now() - (progress.elapsedMs || 0);
+
+      const eventSource = createProgressStream(jobId, {
+        onProgress: (prog) => {
+          const now = Date.now();
+          if (now - lastProgressUpdateRef.current < PROGRESS_THROTTLE_MS) {
+            return;
+          }
+          lastProgressUpdateRef.current = now;
+
+          const percent = prog.total ? Math.min(100, Math.round((prog.progress / prog.total) * 100)) : 0;
+          const elapsedMs = Date.now() - startTimeRef;
+          setProgress({
+            percent,
+            completed: prog.progress || 0,
+            total: prog.total || 0,
+            status: prog.status || "running",
+            phase: prog.extra?.phase || prog.phase || "",
+            elapsedMs,
+          });
+        },
+        onDone: async (prog) => {
+          eventSourceRef.current = null;
+
+          if (prog.status === "done") {
+            try {
+              const data = await getAiAgentResult(jobId);
+              const baseRuns = (data.all && data.all.length ? data.all : data.top || []).map((r, idx) => ({
+                ...r,
+                strategyId: `s${idx + 1}`,
+              }));
+              setResult({
+                ...data,
+                runs: baseRuns,
+              });
+              if (baseRuns.length) {
+                setSelectedBotId(baseRuns[0].strategyId);
+                setTradesBotId(baseRuns[0].strategyId);
+              }
+              setAgentComment(data.comment || "");
+
+              const vis = {};
+              baseRuns.slice(0, 5).forEach((r) => {
+                vis[r.strategyId] = true;
+              });
+              setVisibleSeries(vis);
+              setProgress({ percent: 100, completed: progress.total, total: progress.total, status: "done" });
+            } catch (err) {
+              setError(err.message || "Failed to fetch result");
+            }
+          } else if (prog.status === "error") {
+            setError(prog.error || "AI Agent failed");
+          } else if (prog.status === "canceled") {
+            setError("Đã hủy bởi người dùng");
+          }
+
+          setLoading(false);
+          setJobId(null);
+        },
+        onError: (error) => {
+          console.error("[SSE] Reconnect error:", error);
+        },
+      });
+
+      eventSourceRef.current = eventSource;
+    }
+  }, [jobId, loading]);
+
+  // Cleanup EventSource on unmount - but DON'T cancel the job
+  // The job continues running on the server
   useEffect(() => {
     return () => {
       if (eventSourceRef.current) {
@@ -574,6 +962,101 @@ export default function Dashboard() {
     const key = `s${idx + 1}`;
     setVisibleSeries({ [key]: true });
     setSelectedBotId(key);
+  };
+
+  // Toggle selection for Memory
+  const handleToggleMemorySelect = (strategyId) => {
+    setSelectedForMemory(prev => ({
+      ...prev,
+      [strategyId]: !prev[strategyId]
+    }));
+  };
+
+  // Get count of selected genomes for Memory
+  const selectedForMemoryCount = Object.values(selectedForMemory).filter(v => v).length;
+
+  // Add selected genomes to BXH Memory
+  const handleAddToMemory = async () => {
+    // Get selected genomes from selectedForMemory (checkbox in table)
+    const selectedKeys = Object.entries(selectedForMemory)
+      .filter(([_, selected]) => selected)
+      .map(([key]) => key);
+
+    if (!selectedKeys.length) {
+      setAddToMemorySuccess({ error: "Tick checkbox để chọn genomes" });
+      return;
+    }
+
+    // Find the actual run objects for selected keys
+    const selectedGenomes = sortedRuns.filter(run => selectedKeys.includes(run.strategyId));
+
+    if (!selectedGenomes.length) {
+      setAddToMemorySuccess({ error: "Không tìm thấy genomes đã chọn" });
+      return;
+    }
+
+    // Prompt user for Run number
+    const runNumberStr = window.prompt(
+      `Nhập Run # để đánh dấu nguồn (Source) cho ${selectedGenomes.length} genomes:`,
+      ""
+    );
+    if (!runNumberStr) return; // User cancelled
+
+    const runNumber = parseInt(runNumberStr, 10);
+    if (isNaN(runNumber) || runNumber < 1) {
+      setAddToMemorySuccess({ error: "Run # không hợp lệ" });
+      return;
+    }
+
+    setAddingToMemory(true);
+    setAddToMemorySuccess(null);
+
+    try {
+      // Get current symbol/timeframe from inputs
+      const symbol = currentInputs.symbol || "BTCUSDT";
+      const timeframes = currentInputs.timeframes || ["30m"];
+      const tf = timeframes[0] || "30m";
+      // IMPORTANT: Use strategy type from result (Combined vs Long Only)
+      // This ensures genomes are saved to the correct Memory (matching the strategy that was run)
+      const strategyType = result?.strategyType || currentStrategy?.type || "rf_st_rsi";
+
+      // Get backtest range from result or inputs
+      const backtestStart = result?.meta?.range?.from || rangeFrom || "";
+      const backtestEnd = result?.meta?.range?.to || rangeTo || "";
+
+      // Format genomes for API
+      const genomesToAdd = selectedGenomes.map(run => ({
+        genome: run.params || run.genome,
+        summary: {
+          ...run.summary,
+          // Add backtest range to summary so API can extract it
+          backtest_start: backtestStart,
+          backtest_end: backtestEnd,
+        },
+        equityCurve: run.equityCurve || [],
+        source: runNumber,  // Use integer, not string
+      }));
+
+      console.log(`[Dashboard] Adding ${genomesToAdd.length} genomes to ${strategyType} Memory (Run #${runNumber})`);
+
+      const response = await addGenomesToMemory(symbol, tf, genomesToAdd, strategyType);
+
+      if (response.success || response.added_count > 0) {
+        setAddToMemorySuccess({ count: response.added_count || genomesToAdd.length });
+        // Clear selection after successful add
+        setSelectedForMemory({});
+        console.log(`[Dashboard] Successfully added ${response.added_count || genomesToAdd.length} genomes to ${strategyType} Memory`);
+      } else {
+        setAddToMemorySuccess({ error: response.error || "Không thể thêm genomes" });
+      }
+    } catch (err) {
+      console.error("[Dashboard] Failed to add genomes to Memory:", err);
+      setAddToMemorySuccess({ error: err.message || "Lỗi khi thêm genomes" });
+    } finally {
+      setAddingToMemory(false);
+      // Clear success message after 5 seconds
+      setTimeout(() => setAddToMemorySuccess(null), 5000);
+    }
   };
 
   const sortedRuns = useMemo(() => {
@@ -1153,6 +1636,7 @@ export default function Dashboard() {
                   </>
                 )}
 
+                {/* RF + ST + RSI Divergence (Long only) */}
                 {currentStrategy?.id === "rf_st_rsi" && (
                   <div style={{ marginTop: 12 }}>
                     {/* Entry Settings Group */}
@@ -1300,6 +1784,202 @@ export default function Dashboard() {
                   </div>
                 )}
 
+                {/* RF + ST + RSI Combined (Long & Short) */}
+                {currentStrategy?.id === "rf_st_rsi_combined" && (
+                  <div style={{ marginTop: 12 }}>
+                    {/* Entry Settings Group (Shared) */}
+                    <div style={{ marginBottom: 12, border: "1px solid #2d2d44", borderRadius: 8, overflow: "hidden" }}>
+                      <div
+                        onClick={() => toggleParamGroup("Entry Settings")}
+                        style={{
+                          background: "#1a1a2e",
+                          padding: "12px 16px",
+                          cursor: "pointer",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, fontSize: 14 }}>Entry Settings (Shared)</span>
+                        <span style={{ color: "#9ca3af" }}>{expandedParamGroups["Entry Settings"] ? "▼" : "▶"}</span>
+                      </div>
+                      {expandedParamGroups["Entry Settings"] && (
+                        <div style={{ padding: 16, background: "#0f0f1a" }}>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginBottom: 16 }}>
+                            <BoolInput label="Enable Dual Flip Entry" inputKey="showDualFlip" defaultVal={true} currentInputs={currentInputs} updateInput={updateInput} />
+                            <BoolInput label="Enable RSI Divergence Entry" inputKey="showRSI" defaultVal={true} currentInputs={currentInputs} updateInput={updateInput} />
+                            <BoolInput label="Enable Long" inputKey="enableLong" defaultVal={true} currentInputs={currentInputs} updateInput={updateInput} />
+                            <BoolInput label="Enable Short" inputKey="enableShort" defaultVal={true} currentInputs={currentInputs} updateInput={updateInput} />
+                            <BoolInput label="ST use ATR?" inputKey="st_useATR" defaultVal={true} currentInputs={currentInputs} updateInput={updateInput} />
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
+                            <RangeInput label="ST ATR Period" inputKey="st_atrPeriod" defaults={[1, 50, 2]} currentInputs={currentInputs} updateInput={updateInput} />
+                            <RangeInput label="ST Multiplier" inputKey="st_mult" defaults={[0.5, 10, 0.5]} currentInputs={currentInputs} updateInput={updateInput} />
+                            <RangeInput label="RF Period" inputKey="rf_period" defaults={[1, 200, 20]} currentInputs={currentInputs} updateInput={updateInput} />
+                            <RangeInput label="RF Multiplier" inputKey="rf_mult" defaults={[1, 10, 1]} currentInputs={currentInputs} updateInput={updateInput} />
+                            <RangeInput label="RSI Length" inputKey="rsi_length" defaults={[5, 20, 2]} currentInputs={currentInputs} updateInput={updateInput} />
+                            <RangeInput label="MA Length on RSI" inputKey="rsi_ma_length" defaults={[2, 20, 2]} currentInputs={currentInputs} updateInput={updateInput} />
+                            <RangeInput label="Dual Flip Bars (Long)" inputKey="dualFlipBarsLong" defaults={[1, 30, 2]} currentInputs={currentInputs} updateInput={updateInput} />
+                            <RangeInput label="Dual Flip Bars (Short)" inputKey="dualFlipBarsShort" defaults={[1, 30, 2]} currentInputs={currentInputs} updateInput={updateInput} />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Stop Loss Long Group */}
+                    <div style={{ marginBottom: 12, border: "1px solid #22c55e33", borderRadius: 8, overflow: "hidden" }}>
+                      <div
+                        onClick={() => toggleParamGroup("Stop Loss Long")}
+                        style={{
+                          background: "#1a2e1a",
+                          padding: "12px 16px",
+                          cursor: "pointer",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, fontSize: 14, color: "#22c55e" }}>Stop Loss Long</span>
+                        <span style={{ color: "#9ca3af" }}>{expandedParamGroups["Stop Loss Long"] ? "▼" : "▶"}</span>
+                      </div>
+                      {expandedParamGroups["Stop Loss Long"] && (
+                        <div style={{ padding: 16, background: "#0f0f1a", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
+                          <RangeInput label="ST SL ATR Period" inputKey="sl_long_st_atrPeriod" defaults={[1, 50, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="ST SL Mult" inputKey="sl_long_st_mult" defaults={[1, 20, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="RF SL Period" inputKey="sl_long_rf_period" defaults={[1, 200, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="RF SL Multiplier" inputKey="sl_long_rf_mult" defaults={[1, 20, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Stop Loss Short Group */}
+                    <div style={{ marginBottom: 12, border: "1px solid #ef444433", borderRadius: 8, overflow: "hidden" }}>
+                      <div
+                        onClick={() => toggleParamGroup("Stop Loss Short")}
+                        style={{
+                          background: "#2e1a1a",
+                          padding: "12px 16px",
+                          cursor: "pointer",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, fontSize: 14, color: "#ef4444" }}>Stop Loss Short</span>
+                        <span style={{ color: "#9ca3af" }}>{expandedParamGroups["Stop Loss Short"] ? "▼" : "▶"}</span>
+                      </div>
+                      {expandedParamGroups["Stop Loss Short"] && (
+                        <div style={{ padding: 16, background: "#0f0f1a", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
+                          <RangeInput label="ST SL ATR Period" inputKey="sl_short_st_atrPeriod" defaults={[1, 50, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="ST SL Mult" inputKey="sl_short_st_mult" defaults={[1, 20, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="RF SL Period" inputKey="sl_short_rf_period" defaults={[1, 200, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="RF SL Multiplier" inputKey="sl_short_rf_mult" defaults={[1, 20, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Take Profit Dual Flip Long Group */}
+                    <div style={{ marginBottom: 12, border: "1px solid #22c55e33", borderRadius: 8, overflow: "hidden" }}>
+                      <div
+                        onClick={() => toggleParamGroup("TP Dual Flip Long")}
+                        style={{
+                          background: "#1a2e1a",
+                          padding: "12px 16px",
+                          cursor: "pointer",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, fontSize: 14, color: "#22c55e" }}>Take Profit - Dual Flip Long</span>
+                        <span style={{ color: "#9ca3af" }}>{expandedParamGroups["TP Dual Flip Long"] ? "▼" : "▶"}</span>
+                      </div>
+                      {expandedParamGroups["TP Dual Flip Long"] && (
+                        <div style={{ padding: 16, background: "#0f0f1a", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
+                          <RangeInput label="ST TP ATR Period" inputKey="tp_dual_long_st_atrPeriod" defaults={[1, 50, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="ST TP Mult" inputKey="tp_dual_long_st_mult" defaults={[1, 20, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="TP R:R Mult" inputKey="tp_dual_long_rr_mult" defaults={[0.1, 5, 0.5]} currentInputs={currentInputs} updateInput={updateInput} />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Take Profit Dual Flip Short Group */}
+                    <div style={{ marginBottom: 12, border: "1px solid #ef444433", borderRadius: 8, overflow: "hidden" }}>
+                      <div
+                        onClick={() => toggleParamGroup("TP Dual Flip Short")}
+                        style={{
+                          background: "#2e1a1a",
+                          padding: "12px 16px",
+                          cursor: "pointer",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, fontSize: 14, color: "#ef4444" }}>Take Profit - Dual Flip Short</span>
+                        <span style={{ color: "#9ca3af" }}>{expandedParamGroups["TP Dual Flip Short"] ? "▼" : "▶"}</span>
+                      </div>
+                      {expandedParamGroups["TP Dual Flip Short"] && (
+                        <div style={{ padding: 16, background: "#0f0f1a", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
+                          <RangeInput label="ST TP ATR Period" inputKey="tp_dual_short_st_atrPeriod" defaults={[1, 50, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="ST TP Mult" inputKey="tp_dual_short_st_mult" defaults={[1, 20, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="TP R:R Mult" inputKey="tp_dual_short_rr_mult" defaults={[0.1, 5, 0.3]} currentInputs={currentInputs} updateInput={updateInput} />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Take Profit RSI Long Group */}
+                    <div style={{ marginBottom: 12, border: "1px solid #22c55e33", borderRadius: 8, overflow: "hidden" }}>
+                      <div
+                        onClick={() => toggleParamGroup("TP RSI Long")}
+                        style={{
+                          background: "#1a2e1a",
+                          padding: "12px 16px",
+                          cursor: "pointer",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, fontSize: 14, color: "#22c55e" }}>Take Profit - RSI Long</span>
+                        <span style={{ color: "#9ca3af" }}>{expandedParamGroups["TP RSI Long"] ? "▼" : "▶"}</span>
+                      </div>
+                      {expandedParamGroups["TP RSI Long"] && (
+                        <div style={{ padding: 16, background: "#0f0f1a", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
+                          <RangeInput label="ST TP ATR Period" inputKey="tp_rsi_long_st_atrPeriod" defaults={[1, 50, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="ST TP Mult" inputKey="tp_rsi_long_st_mult" defaults={[1, 20, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="TP R:R Mult" inputKey="tp_rsi_long_rr_mult" defaults={[0.1, 5, 0.5]} currentInputs={currentInputs} updateInput={updateInput} />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Take Profit RSI Short Group */}
+                    <div style={{ marginBottom: 12, border: "1px solid #ef444433", borderRadius: 8, overflow: "hidden" }}>
+                      <div
+                        onClick={() => toggleParamGroup("TP RSI Short")}
+                        style={{
+                          background: "#2e1a1a",
+                          padding: "12px 16px",
+                          cursor: "pointer",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, fontSize: 14, color: "#ef4444" }}>Take Profit - RSI Short</span>
+                        <span style={{ color: "#9ca3af" }}>{expandedParamGroups["TP RSI Short"] ? "▼" : "▶"}</span>
+                      </div>
+                      {expandedParamGroups["TP RSI Short"] && (
+                        <div style={{ padding: 16, background: "#0f0f1a", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
+                          <RangeInput label="ST TP ATR Period" inputKey="tp_rsi_short_st_atrPeriod" defaults={[1, 50, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="ST TP Mult" inputKey="tp_rsi_short_st_mult" defaults={[1, 20, 0]} currentInputs={currentInputs} updateInput={updateInput} />
+                          <RangeInput label="TP R:R Mult" inputKey="tp_rsi_short_rr_mult" defaults={[0.1, 5, 0.3]} currentInputs={currentInputs} updateInput={updateInput} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {!currentStrategy?.supported && (
                   <div style={{ marginTop: 12, color: "#f59e0b", fontSize: 12 }}>
                     Strategy này chưa được nối backend trong UI hiện tại. Bạn vẫn có thể chỉnh input và lưu preset, nhưng nút chạy sẽ bị khóa.
@@ -1376,6 +2056,19 @@ export default function Dashboard() {
                 </div>
               )}
               {badge(`TF: ${(currentInputs.timeframes || []).join(", ")}`)}
+              {selectedGenomesCount > 0 && (
+                <span style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  background: "rgba(34,197,94,0.15)",
+                  border: "1px solid rgba(34,197,94,0.4)",
+                  color: "#22c55e",
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}>
+                  Selected: {selectedGenomesCount}
+                </span>
+              )}
               {currentStrategy?.id === "ema" && (
                 <>
                   {badge(
@@ -1585,7 +2278,7 @@ export default function Dashboard() {
 
                 <Section title="Bots / chiến lược (từ backend)">
                   <div style={{ ...pill, height: "100%", display: "flex", flexDirection: "column", gap: 12 }}>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                       {["score", "pnl", "dd", "pf", "wr"].map((k) => (
                         <button
                           key={k}
@@ -1600,12 +2293,38 @@ export default function Dashboard() {
                           Sort: {k.toUpperCase()}
                         </button>
                       ))}
+                      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+                        {addToMemorySuccess && (
+                          <span style={{
+                            fontSize: 12,
+                            color: addToMemorySuccess.error ? "#f87171" : "#22c55e",
+                          }}>
+                            {addToMemorySuccess.error || `Added ${addToMemorySuccess.count} genomes`}
+                          </span>
+                        )}
+                        <button
+                          onClick={handleAddToMemory}
+                          disabled={addingToMemory || selectedForMemoryCount === 0}
+                          style={{
+                            ...legendChip,
+                            padding: "6px 12px",
+                            background: "rgba(168,85,247,0.15)",
+                            color: "#a855f7",
+                            cursor: addingToMemory || selectedForMemoryCount === 0 ? "not-allowed" : "pointer",
+                            opacity: addingToMemory || selectedForMemoryCount === 0 ? 0.5 : 1,
+                          }}
+                        >
+                          {addingToMemory ? "Adding..." : `Add to Memory${selectedForMemoryCount > 0 ? ` (${selectedForMemoryCount})` : ""}`}
+                        </button>
+                      </div>
                     </div>
                     <StrategyTable
                       rows={sortedRuns}
                       pageSize={pageSize}
                       currentPage={currentPageBots}
                       bestKey={bestKey}
+                      selectedForMemory={selectedForMemory}
+                      onToggleMemorySelect={handleToggleMemorySelect}
                       onSelectRow={(row) => {
                         const key = row.strategyId;
                         setVisibleSeries((v) => ({ ...v, [key]: !v[key] }));

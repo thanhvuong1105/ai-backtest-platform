@@ -152,7 +152,7 @@ async def get_chart_data(request: ChartDataRequest):
         # Send input and get output
         stdout, stderr = process.communicate(
             input=json.dumps(config).encode(),
-            timeout=120  # 2 minute timeout
+            timeout=600  # 10 minute timeout for large datasets like 30m
         )
 
         if process.returncode != 0:
